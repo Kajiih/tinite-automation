@@ -5,6 +5,7 @@ End-to-End Tests for Amazon VAT Report FC_Transfer Automation
 from __future__ import annotations
 
 import csv
+import logging
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -203,3 +204,34 @@ def test_cli_invocation_e2e(tmp_path: Path):
     with open(output_destination, mode="r", encoding="utf-8-sig") as file_handle:
         rows = list(csv.reader(file_handle))
         assert len(rows) == 101  # 1 header + 100 rows
+
+
+def test_column_fallback_warning_logging(tmp_path: Path, price_catalog, caplog):
+    """Verify that fallback column resolution emits a standard logger warning."""
+    test_csv_path = tmp_path / "custom_header_report.csv"
+    output_report_path = tmp_path / "custom_header_processed.csv"
+
+    # Read sample report and alter one column header name
+    with open(SAMPLE_REPORT_PATH, mode="r", encoding="utf-8-sig") as f_in:
+        rows = list(csv.reader(f_in))
+
+    # Alter Column Header for COST_PRICE_OF_ITEMS (index 19) to an unknown header
+    rows[0][19] = "UNKNOWN_CUSTOM_PRICE_HEADER"
+
+    with open(test_csv_path, mode="w", encoding="utf-8-sig", newline="") as f_out:
+        writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+        writer.writerows(rows)
+
+    with caplog.at_level(logging.WARNING, logger="process_report"):
+        result = process_vat_report(
+            report_path=test_csv_path,
+            price_catalog=price_catalog,
+            output_path=output_report_path,
+            export_summary=False,
+        )
+
+    assert result.fc_transfer_updated == 40
+    assert any(
+        "Column header 'COST_PRICE_OF_ITEMS' was not found in the CSV header" in record.message
+        for record in caplog.records
+    )

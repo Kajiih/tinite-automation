@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import sys
 from collections import defaultdict
 from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence, Set
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class TransactionType(StrEnum):
@@ -124,6 +127,7 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
     if not price_catalog_path.exists():
         raise FileNotFoundError(f"Excel price catalog file not found at: {price_catalog_path}")
 
+    logger.info("Loading price catalog from: %s", price_catalog_path)
     workbook = openpyxl.load_workbook(filename=price_catalog_path, data_only=True, read_only=True)
     target_worksheet = None
     asin_column_index: int = 0
@@ -159,7 +163,7 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
             raise ValueError(f"No readable worksheets found in Excel file: {price_catalog_path}")
 
     price_catalog: MutableMapping[str, float] = {}
-    for row_values in target_worksheet.iter_rows(min_row=2, values_only=True):
+    for row_index, row_values in enumerate(target_worksheet.iter_rows(min_row=2, values_only=True), start=2):
         if not row_values or len(row_values) <= asin_column_index:
             continue
 
@@ -189,12 +193,19 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
                 price = float(sanitized_price_string)
             price_catalog[asin] = price
         except (ValueError, TypeError):
+            logger.warning(
+                "Skipping unparseable price at row %d for ASIN '%s': %r",
+                row_index,
+                asin,
+                raw_price,
+            )
             continue
 
     workbook.close()
     if not price_catalog:
         raise ValueError(f"No valid ASIN price entries were extracted from: {price_catalog_path}")
 
+    logger.info("Successfully loaded %d ASINs from price catalog.", len(price_catalog))
     return price_catalog
 
 
@@ -250,6 +261,8 @@ def export_country_summary(
         writer = csv.writer(file_handle, quoting=csv.QUOTE_ALL, lineterminator=CSV_LINE_TERMINATOR)
         writer.writerows(output_rows)
 
+    logger.info("Exported country route summary with %d routes to: %s", len(route_statistics), output_csv_path)
+
 
 def format_route_table(route_statistics: Mapping[RouteKey, RouteMetric]) -> str:
     """Format route metrics into an aligned, readable terminal table."""
@@ -303,6 +316,7 @@ def process_vat_report(
     if not report_path.exists():
         raise FileNotFoundError(f"VAT report file not found at: {report_path}")
 
+    logger.info("Processing VAT report: %s", report_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(report_path, mode="r", encoding=DEFAULT_ENCODING, newline="") as infile:
@@ -317,7 +331,14 @@ def process_vat_report(
         }
 
         def resolve_column_index(column_header: ColumnHeader, fallback_index: int) -> int:
-            return column_indices.get(column_header.value, fallback_index)
+            if column_header.value in column_indices:
+                return column_indices[column_header.value]
+            logger.warning(
+                "Column header '%s' was not found in the CSV header. Falling back to default column position index %d.",
+                column_header.value,
+                fallback_index,
+            )
+            return fallback_index
 
         index_transaction_type = resolve_column_index(ColumnHeader.TRANSACTION_TYPE, 5)
         index_asin = resolve_column_index(ColumnHeader.ASIN, 13)
@@ -411,6 +432,13 @@ def process_vat_report(
     if export_summary:
         export_country_summary(route_statistics, summary_path)
 
+    logger.info(
+        "Finished processing '%s': %d total rows, %d FC_TRANSFER rows filled (added €%.2f).",
+        report_path.name,
+        total_rows,
+        fc_transfer_updated,
+        total_value_added,
+    )
     return FileProcessingResult(
         report_path=report_path,
         output_path=output_path,
@@ -454,6 +482,7 @@ def process_batch(
         raise FileNotFoundError(f"No .csv files found in directory: {input_directory}")
 
     report_files.sort()
+    logger.info("Starting batch processing of %d files in: %s", len(report_files), input_directory)
     price_catalog = load_price_catalog(price_catalog_path)
 
     batch_summary_path = target_output_directory / "batch_country_summary.csv"
@@ -484,6 +513,7 @@ def process_batch(
 
     batch_result.file_results = mutable_file_results
     export_country_summary(batch_result.consolidated_routes, batch_summary_path)
+    logger.info("Batch processing complete: %d files processed successfully.", len(report_files))
     return batch_result
 
 
@@ -587,6 +617,8 @@ def prompt_for_path(prompt_text: str) -> Path:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="  [%(levelname)s] %(message)s")
+
     parser = argparse.ArgumentParser(
         description="Fill missing prices for FC_TRANSFER rows and calculate Departure x Arrival country sums in Amazon VAT Reports."
     )
@@ -642,8 +674,8 @@ def main() -> None:
             target_output_path = output_path if output_path else default_output_path
             file_result = process_vat_report(input_path, price_catalog, target_output_path, export_summary=True)
             print_single_summary(file_result, len(price_catalog), price_catalog_path)
-    except Exception as error:
-        print(f"\n[ERROR] {error}", file=sys.stderr)
+    except Exception:
+        logger.exception("Operation failed")
         sys.exit(1)
 
 
