@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import openpyxl
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -38,6 +40,7 @@ SUPPORTED_IMAGE_EXTENSIONS: frozenset[str] = frozenset({
 })
 
 ASIN_REGEX_PATTERN: re.Pattern[str] = re.compile(r"^[A-Z0-9]{10}$")
+EXPECTED_SPLIT_PARTS: int = 2
 
 
 @dataclass(slots=True)
@@ -75,24 +78,30 @@ class DuplicationResult:
 def extract_suffix(filename: str) -> tuple[str, str]:
     """Extract the suffix and extension from an image filename.
 
+    Args:
+        filename: Name or path of the image file.
+
+    Returns:
+        Tuple containing (suffix_name, extension).
+
     Examples:
         - "MAIN.jpg" -> ("MAIN", "jpg")
         - "PT01.png" -> ("PT01", "png")
         - "01.jpeg"  -> ("01", "jpeg")
-        - "B089WJC6Z4.MAIN.jpg" -> ("MAIN", "jpg") (strips existing 10-char ASIN prefix)
+        - "B089WJC6Z4.MAIN.jpg" -> ("MAIN", "jpg")
     """
     raw_path = Path(filename)
     extension = raw_path.suffix.lstrip(".").lower()
     stem = raw_path.stem
 
-    # If the file already starts with a 10-character alphanumeric ASIN prefix followed by '.' or '_'
     parts = stem.split(".", 1)
-    if len(parts) == 2 and ASIN_REGEX_PATTERN.match(parts[0].upper()):
+    if len(parts) == EXPECTED_SPLIT_PARTS and ASIN_REGEX_PATTERN.match(parts[0].upper()):
         suffix = parts[1].strip()
     else:
-        # Check underscore separator e.g. B000000000_MAIN
         parts_underscore = stem.split("_", 1)
-        if len(parts_underscore) == 2 and ASIN_REGEX_PATTERN.match(parts_underscore[0].upper()):
+        if len(parts_underscore) == EXPECTED_SPLIT_PARTS and ASIN_REGEX_PATTERN.match(
+            parts_underscore[0].upper()
+        ):
             suffix = parts_underscore[1].strip()
         else:
             suffix = stem.strip()
@@ -101,16 +110,21 @@ def extract_suffix(filename: str) -> tuple[str, str]:
 
 
 def parse_asins_from_text(text: str) -> list[str]:
-    """Parse, clean, and deduplicate ASINs from a multi-line or delimited text string."""
+    """Parse, clean, and deduplicate ASINs from a multi-line or delimited text string.
+
+    Args:
+        text: Raw text string containing ASIN tokens.
+
+    Returns:
+        Deduplicated list of cleaned, uppercase ASIN strings.
+    """
     tokens = re.split(r"[\r\n,;\t\s]+", text)
     seen: set[str] = set()
     asins: list[str] = []
 
     for token in tokens:
         cleaned = token.strip().upper()
-        if not cleaned:
-            continue
-        if cleaned == "ASIN":
+        if not cleaned or cleaned == "ASIN":
             continue
         if cleaned not in seen:
             seen.add(cleaned)
@@ -120,7 +134,14 @@ def parse_asins_from_text(text: str) -> list[str]:
 
 
 def parse_asins_from_csv(csv_content: str | bytes) -> list[str]:
-    """Extract ASINs from CSV content, automatically locating the ASIN header column."""
+    """Extract ASINs from CSV content, automatically locating the ASIN header column.
+
+    Args:
+        csv_content: CSV text or raw UTF-8 encoded bytes.
+
+    Returns:
+        List of deduplicated uppercase ASIN strings.
+    """
     text = csv_content.decode("utf-8-sig") if isinstance(csv_content, bytes) else csv_content
     reader = csv.reader(io.StringIO(text))
     rows = list(reader)
@@ -152,9 +173,14 @@ def parse_asins_from_csv(csv_content: str | bytes) -> list[str]:
 
 
 def parse_asins_from_excel(file_bytes_or_path: bytes | Path) -> list[str]:
-    """Extract ASINs from an Excel .xlsx workbook."""
-    import openpyxl
+    """Extract ASINs from an Excel .xlsx workbook.
 
+    Args:
+        file_bytes_or_path: File bytes or Path to the .xlsx workbook.
+
+    Returns:
+        List of deduplicated uppercase ASIN strings.
+    """
     if isinstance(file_bytes_or_path, bytes):
         wb = openpyxl.load_workbook(
             filename=io.BytesIO(file_bytes_or_path), data_only=True, read_only=True
@@ -164,47 +190,52 @@ def parse_asins_from_excel(file_bytes_or_path: bytes | Path) -> list[str]:
 
     target_sheet = wb.active
     asin_col_idx = 0
-
-    first_row = next(target_sheet.iter_rows(values_only=True), None)
-    if first_row:
-        for idx, cell in enumerate(first_row):
-            if cell and "asin" in str(cell).strip().lower():
-                asin_col_idx = idx
-                break
-
-    seen: set[str] = set()
     asins: list[str] = []
 
-    for row in target_sheet.iter_rows(min_row=2, values_only=True):
-        if row and len(row) > asin_col_idx:
-            cell_val = row[asin_col_idx]
-            if cell_val is not None:
-                val = str(cell_val).strip().upper()
-                if val and val != "ASIN" and val not in seen:
-                    seen.add(val)
-                    asins.append(val)
+    if target_sheet is not None:
+        first_row = next(target_sheet.iter_rows(values_only=True), None)
+        if first_row:
+            for idx, cell in enumerate(first_row):
+                if cell and "asin" in str(cell).strip().lower():
+                    asin_col_idx = idx
+                    break
+
+        seen: set[str] = set()
+        for row in target_sheet.iter_rows(min_row=2, values_only=True):
+            if row and len(row) > asin_col_idx:
+                cell_val = row[asin_col_idx]
+                if cell_val is not None:
+                    val = str(cell_val).strip().upper()
+                    if val and val != "ASIN" and val not in seen:
+                        seen.add(val)
+                        asins.append(val)
 
     wb.close()
     return asins
 
 
 def parse_asins(source: str | bytes | Path) -> list[str]:
-    """Unified ASIN parser supporting strings, .txt paths, .csv, and .xlsx."""
+    """Unified ASIN parser supporting strings, .txt paths, .csv, and .xlsx.
+
+    Args:
+        source: Text string, byte payload, or filesystem Path.
+
+    Returns:
+        List of deduplicated uppercase ASIN strings.
+    """
     if isinstance(source, Path):
         ext = source.suffix.lower()
         if ext == ".xlsx":
             return parse_asins_from_excel(source)
-        if ext == ".csv":
-            return parse_asins_from_csv(source.read_text(encoding="utf-8-sig"))
-        return parse_asins_from_text(source.read_text(encoding="utf-8-sig"))
+        content = source.read_text(encoding="utf-8-sig")
+        return parse_asins_from_csv(content) if ext == ".csv" else parse_asins_from_text(content)
 
     if isinstance(source, bytes):
-        # Inspect magic bytes or fallback to text
-        if source.startswith(b"PK\x03\x04"):  # Zip/Excel magic header
+        if source.startswith(b"PK\x03\x04"):
             return parse_asins_from_excel(source)
         try:
             return parse_asins_from_csv(source)
-        except Exception:
+        except (UnicodeDecodeError, csv.Error):
             return parse_asins_from_text(source.decode("utf-8-sig", errors="ignore"))
 
     return parse_asins_from_text(str(source))
@@ -214,7 +245,15 @@ def generate_image_manifest(
     image_filenames: Sequence[str],
     asins: Sequence[str],
 ) -> list[TargetImageFile]:
-    """Compute the target file list and folder structure for all ASINs."""
+    """Compute the target file list and folder structure for all ASINs.
+
+    Args:
+        image_filenames: List of source template image names.
+        asins: List of ASIN strings.
+
+    Returns:
+        List of TargetImageFile records.
+    """
     entries: list[ImageEntry] = []
     for fname in image_filenames:
         base_name = Path(fname).name
@@ -246,9 +285,25 @@ def duplicate_images(
     images_dir: Path,
     asins: Sequence[str],
     output_dir: Path,
+    *,
     use_hardlinks: bool = False,
 ) -> DuplicationResult:
-    """Duplicate images from images_dir across each ASIN into output_dir/<ASIN>/<ASIN>.<SUFFIX>.<ext>."""
+    """Duplicate template images across each ASIN into output_dir/<ASIN>/<ASIN>.<SUFFIX>.<ext>.
+
+    Args:
+        images_dir: Folder containing template source images.
+        asins: Collection of ASIN strings.
+        output_dir: Destination folder.
+        use_hardlinks: Whether to create OS hardlinks instead of copying data.
+
+    Returns:
+        DuplicationResult summarizing created files.
+
+    Raises:
+        NotADirectoryError: If images_dir is not a directory.
+        ValueError: If asins collection is empty.
+        FileNotFoundError: If images_dir contains no supported image files.
+    """
     if not images_dir.is_dir():
         msg = f"Images source directory not found: {images_dir}"
         raise NotADirectoryError(msg)
@@ -259,7 +314,6 @@ def duplicate_images(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Collect source images
     source_files: list[Path] = [
         f
         for f in sorted(images_dir.iterdir())
@@ -314,11 +368,14 @@ def duplicate_images(
 
 
 def main() -> None:
+    """CLI Entry point for the Amazon ASIN Image Duplicator & Renamer Tool."""
     logging.basicConfig(level=logging.INFO, format="  [%(levelname)s] %(message)s")
 
-    parser = argparse.ArgumentParser(
-        description="Duplicate and rename a set of template images across an ASIN list: <output>/<ASIN>/<ASIN>.<SUFFIX>.<ext>"
+    desc = (
+        "Duplicate and rename a set of template images across an ASIN list: "
+        "<output>/<ASIN>/<ASIN>.<SUFFIX>.<ext>"
     )
+    parser = argparse.ArgumentParser(description=desc)
     parser.add_argument(
         "--images",
         dest="images_dir",
@@ -372,11 +429,12 @@ def main() -> None:
             use_hardlinks=args.hardlinks,
         )
         print(
-            f"  ✓ Success! Generated {result.total_created_files} images for {result.asins_count} ASINs."
+            f"  ✓ Success! Generated {result.total_created_files} images for "
+            f"{result.asins_count} ASINs."
         )
         print(f"  Location: {result.output_directory}")
         print("=" * 64 + "\n")
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         logger.exception("Image duplication failed")
         sys.exit(1)
 

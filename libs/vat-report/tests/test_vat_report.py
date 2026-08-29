@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-import subprocess
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -59,242 +59,226 @@ EXPECTED_BATCH_COUNTRY_SUMMARY: Sequence[Sequence[str]] = [
 ]
 
 
-class TestSingleVatReportProcessing:
-    """Tests for single VAT report execution and calculations."""
+def test_single_file_processing_golden_dataset(
+    tmp_path: Path,
+    sample_vat_report_path: Path,
+    price_catalog: dict[str, float],
+) -> None:
+    """Verify row-by-row invariance and full cross-border summary matrix."""
+    output_report_path = tmp_path / "processed_vat_report.csv"
 
-    def test_single_file_processing_golden_dataset(
-        self,
-        tmp_path: Path,
-        sample_vat_report_path: Path,
-        price_catalog: dict[str, float],
-    ) -> None:
-        """Verify row-by-row invariance and full cross-border summary matrix."""
-        output_report_path = tmp_path / "processed_vat_report.csv"
-
-        result = process_vat_report(
-            report_path=sample_vat_report_path,
-            price_catalog=price_catalog,
-            output_path=output_report_path,
-            export_summary=True,
-        )
-
-        assert result.total_rows == 100
-        assert result.fc_transfer_count == 40
-        assert result.fc_transfer_updated == 40
-        assert result.total_value_added == pytest.approx(234.99, abs=0.01)
-        assert not result.missing_asins
-        assert output_report_path.exists()
-
-        # Row-by-Row Invariance Validation
-        with sample_vat_report_path.open(encoding="utf-8-sig") as f_in:
-            original_rows = list(csv.reader(f_in))
-
-        with output_report_path.open(encoding="utf-8-sig") as f_out:
-            processed_rows = list(csv.reader(f_out))
-
-        assert len(processed_rows) == len(original_rows)
-        assert processed_rows[0] == original_rows[0]
-
-        header = processed_rows[0]
-        index_type = header.index(ColumnHeader.TRANSACTION_TYPE.value)
-        index_asin = header.index(ColumnHeader.ASIN.value)
-        index_qty = header.index(ColumnHeader.QUANTITY.value)
-        index_cost = header.index(ColumnHeader.COST_PRICE_OF_ITEMS.value)
-        index_price_vat_excl = header.index(ColumnHeader.PRICE_OF_ITEMS_AMT_VAT_EXCL.value)
-        index_total_price_vat_excl = header.index(
-            ColumnHeader.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL.value
-        )
-        index_total_activity_vat_excl = header.index(
-            ColumnHeader.TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL.value
-        )
-
-        # Row-by-Row Invariance: Guarantee SALE, REFUND, and RETURN transactions are 100% untouched
-        for original_row, processed_row in zip(original_rows[1:], processed_rows[1:], strict=True):
-            if original_row[index_type] != TransactionType.FC_TRANSFER.value:
-                assert processed_row == original_row
-
-        # Golden transfer verification on sample rows
-        transfer_1 = next(
-            r
-            for r in processed_rows
-            if r[index_asin] == "B082J5LPCV" and r[index_type] == TransactionType.FC_TRANSFER.value
-        )
-        assert transfer_1[index_cost] == "3.00"
-        assert transfer_1[index_price_vat_excl] == "3.00"
-        assert transfer_1[index_total_price_vat_excl] == ""
-        assert transfer_1[index_total_activity_vat_excl] == ""
-
-        transfer_2 = next(
-            r
-            for r in processed_rows
-            if r[index_asin] == "B089WHBJHC"
-            and r[index_type] == TransactionType.FC_TRANSFER.value
-            and r[index_qty] == "2"
-        )
-        assert transfer_2[index_cost] == "3.10"
-        assert transfer_2[index_price_vat_excl] == "6.20"
-        assert transfer_2[index_total_price_vat_excl] == ""
-        assert transfer_2[index_total_activity_vat_excl] == ""
-
-        # Country Summary Full Matrix Validation
-        assert result.summary_path is not None
-        assert result.summary_path.exists()
-        with result.summary_path.open(encoding="utf-8-sig") as file_handle:
-            summary_rows = list(csv.reader(file_handle))
-
-        assert summary_rows == EXPECTED_SINGLE_COUNTRY_SUMMARY
-
-
-class TestBatchVatReportProcessing:
-    """Tests for multi-file batch folder processing."""
-
-    def test_batch_folder_processing_golden_dataset(
-        self,
-        tmp_path: Path,
-        sample_vat_report_path: Path,
-        price_catalog_path: Path,
-    ) -> None:
-        """Verify batch folder aggregation and consolidated matrix generation."""
-        batch_input_dir = tmp_path / "batch_input"
-        batch_input_dir.mkdir()
-
-        (batch_input_dir / "report_january.csv").write_bytes(sample_vat_report_path.read_bytes())
-        (batch_input_dir / "report_february.csv").write_bytes(sample_vat_report_path.read_bytes())
-
-        batch_result = process_batch(
-            input_directory=batch_input_dir,
-            price_catalog_path=price_catalog_path,
-        )
-
-        consolidated_summary_path = batch_input_dir / "processed" / "batch_country_summary.csv"
-
-        assert batch_result.files_count == 2
-        assert batch_result.grand_total_rows == 200
-        assert batch_result.grand_fc_updated == 80
-        assert batch_result.grand_value_added == pytest.approx(469.98, abs=0.01)
-        assert not batch_result.all_missing_asins
-        assert consolidated_summary_path.exists()
-
-        with consolidated_summary_path.open(encoding="utf-8-sig") as f:
-            summary_rows = list(f)
-            reader = csv.reader(summary_rows)
-            assert list(reader) == EXPECTED_BATCH_COUNTRY_SUMMARY
-
-
-class TestVatReportEdgeCases:
-    """Tests for edge cases, missing ASINs, decimal quantities, and fallbacks."""
-
-    @pytest.mark.parametrize(
-        ("raw_qty", "unit_price", "expected_qty", "expected_total"),
-        [
-            ("1", 3.10, 1.0, 3.10),
-            ("3", 3.10, 3.0, 9.30),
-            ("2,5", 4.00, 2.5, 10.00),
-            ("1.75", 10.00, 1.75, 17.50),
-            ("", 5.00, 1.0, 5.00),  # Empty defaults to 1
-            ("invalid", 5.00, 1.0, 5.00),  # Unparseable defaults to 1
-        ],
+    result = process_vat_report(
+        report_path=sample_vat_report_path,
+        price_catalog=price_catalog,
+        output_path=output_report_path,
+        export_summary=True,
     )
-    def test_quantity_parsing_and_total_calculation(
-        self,
-        tmp_path: Path,
-        fake_vat_csv_factory: Callable[[Sequence[dict[str, str]]], Path],
-        raw_qty: str,
-        unit_price: float,
-        expected_qty: float,
-        expected_total: float,
-    ) -> None:
-        """Verify robust quantity parsing and total pricing across various formats."""
-        custom_catalog = {"TEST_ASIN": unit_price}
-        report_file = fake_vat_csv_factory([
-            {
-                "transaction_type": "FC_TRANSFER",
-                "asin": "TEST_ASIN",
-                "qty": raw_qty,
-                "departure": "DE",
-                "arrival": "FR",
-            },
-        ])
-        output_file = tmp_path / "out.csv"
 
-        result = process_vat_report(report_file, custom_catalog, output_file, export_summary=False)
-        route = result.route_statistics[RouteKey("DE", "FR")]
+    assert result.total_rows == 100
+    assert result.fc_transfer_count == 40
+    assert result.fc_transfer_updated == 40
+    assert result.total_value_added == pytest.approx(234.99, abs=0.01)
+    assert not result.missing_asins
+    assert output_report_path.exists()
 
-        assert result.fc_transfer_updated == 1
-        assert result.total_value_added == pytest.approx(expected_total, abs=0.01)
-        assert route.total_quantity == pytest.approx(expected_qty, abs=0.01)
-        assert route.total_amount_eur == pytest.approx(expected_total, abs=0.01)
+    # Row-by-Row Invariance Validation
+    with sample_vat_report_path.open(encoding="utf-8-sig") as f_in:
+        original_rows = list(csv.reader(f_in))
 
-    def test_missing_asin_handling(
-        self,
-        tmp_path: Path,
-        fake_vat_csv_factory: Callable[[Sequence[dict[str, str]]], Path],
-    ) -> None:
-        """Verify that unmatched ASINs are cleanly tracked and left unfilled."""
-        custom_catalog = {"KNOWN_ASIN": 10.0}
-        report_file = fake_vat_csv_factory([
-            {
-                "transaction_type": "FC_TRANSFER",
-                "asin": "KNOWN_ASIN",
-                "qty": "2",
-                "departure": "DE",
-                "arrival": "FR",
-            },
-            {
-                "transaction_type": "FC_TRANSFER",
-                "asin": "UNKNOWN_ASIN_1",
-                "qty": "1",
-                "departure": "DE",
-                "arrival": "PL",
-            },
-            {
-                "transaction_type": "FC_TRANSFER",
-                "asin": "UNKNOWN_ASIN_2",
-                "qty": "1",
-                "departure": "FR",
-                "arrival": "IT",
-            },
-        ])
-        output_file = tmp_path / "out.csv"
+    with output_report_path.open(encoding="utf-8-sig") as f_out:
+        processed_rows = list(csv.reader(f_out))
 
-        result = process_vat_report(report_file, custom_catalog, output_file, export_summary=False)
+    assert len(processed_rows) == len(original_rows)
+    assert processed_rows[0] == original_rows[0]
 
-        assert result.fc_transfer_count == 3
-        assert result.fc_transfer_updated == 1
-        assert result.missing_asins == ["UNKNOWN_ASIN_1", "UNKNOWN_ASIN_2"]
-        assert result.missing_rows_count == 2
-        assert result.total_value_added == pytest.approx(20.00, abs=0.01)
+    header = processed_rows[0]
+    index_type = header.index(ColumnHeader.TRANSACTION_TYPE.value)
+    index_asin = header.index(ColumnHeader.ASIN.value)
+    index_qty = header.index(ColumnHeader.QUANTITY.value)
+    index_cost = header.index(ColumnHeader.COST_PRICE_OF_ITEMS.value)
+    index_price_vat_excl = header.index(ColumnHeader.PRICE_OF_ITEMS_AMT_VAT_EXCL.value)
+    index_total_price_vat_excl = header.index(ColumnHeader.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL.value)
+    index_total_activity_vat_excl = header.index(
+        ColumnHeader.TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL.value
+    )
+
+    # Row-by-Row Invariance: Guarantee SALE, REFUND, and RETURN transactions are 100% untouched
+    for original_row, processed_row in zip(original_rows[1:], processed_rows[1:], strict=True):
+        if original_row[index_type] != TransactionType.FC_TRANSFER.value:
+            assert processed_row == original_row
+
+    # Golden transfer verification on sample rows
+    transfer_1 = next(
+        r
+        for r in processed_rows
+        if r[index_asin] == "B082J5LPCV" and r[index_type] == TransactionType.FC_TRANSFER.value
+    )
+    assert transfer_1[index_cost] == "3.00"
+    assert transfer_1[index_price_vat_excl] == "3.00"
+    assert not transfer_1[index_total_price_vat_excl]
+    assert not transfer_1[index_total_activity_vat_excl]
+
+    transfer_2 = next(
+        r
+        for r in processed_rows
+        if r[index_asin] == "B089WHBJHC"
+        and r[index_type] == TransactionType.FC_TRANSFER.value
+        and r[index_qty] == "2"
+    )
+    assert transfer_2[index_cost] == "3.10"
+    assert transfer_2[index_price_vat_excl] == "6.20"
+    assert not transfer_2[index_total_price_vat_excl]
+    assert not transfer_2[index_total_activity_vat_excl]
+
+    # Country Summary Full Matrix Validation
+    assert result.summary_path is not None
+    assert result.summary_path.exists()
+    with result.summary_path.open(encoding="utf-8-sig") as file_handle:
+        summary_rows = list(csv.reader(file_handle))
+
+    assert summary_rows == EXPECTED_SINGLE_COUNTRY_SUMMARY
 
 
-class TestVatReportCli:
-    """Tests for CLI invocation."""
+def test_batch_folder_processing_golden_dataset(
+    tmp_path: Path,
+    sample_vat_report_path: Path,
+    price_catalog_path: Path,
+) -> None:
+    """Verify batch folder aggregation and consolidated matrix generation."""
+    batch_input_dir = tmp_path / "batch_input"
+    batch_input_dir.mkdir()
 
-    def test_cli_invocation_e2e(
-        self,
-        tmp_path: Path,
-        sample_vat_report_path: Path,
-        price_catalog_path: Path,
-    ) -> None:
-        """Verify CLI script invocation produces identical output files."""
-        output_destination = tmp_path / "cli_output.csv"
-        script_path = Path(__file__).resolve().parent.parent / "src" / "vat_report" / "engine.py"
+    (batch_input_dir / "report_january.csv").write_bytes(sample_vat_report_path.read_bytes())
+    (batch_input_dir / "report_february.csv").write_bytes(sample_vat_report_path.read_bytes())
 
-        command = [
-            sys.executable,
-            str(script_path),
-            "--vat-report",
-            str(sample_vat_report_path),
-            "--price-catalog",
-            str(price_catalog_path),
-            "--output",
-            str(output_destination),
-        ]
+    batch_result = process_batch(
+        input_directory=batch_input_dir,
+        price_catalog_path=price_catalog_path,
+    )
 
-        execution = subprocess.run(command, capture_output=True, text=True, check=True)
+    consolidated_summary_path = batch_input_dir / "processed" / "batch_country_summary.csv"
 
-        assert execution.returncode == 0
-        assert "AMAZON VAT REPORT PROCESSING COMPLETE" in execution.stdout
-        assert output_destination.exists()
+    assert batch_result.files_count == 2
+    assert batch_result.grand_total_rows == 200
+    assert batch_result.grand_fc_updated == 80
+    assert batch_result.grand_value_added == pytest.approx(469.98, abs=0.01)
+    assert not batch_result.all_missing_asins
+    assert consolidated_summary_path.exists()
 
-        with output_destination.open(encoding="utf-8-sig") as f:
-            assert len(list(csv.reader(f))) == 101
+    with consolidated_summary_path.open(encoding="utf-8-sig") as f:
+        summary_rows = list(f)
+        reader = csv.reader(summary_rows)
+        assert list(reader) == EXPECTED_BATCH_COUNTRY_SUMMARY
+
+
+@pytest.mark.parametrize(
+    ("raw_qty", "unit_price", "expected_qty", "expected_total"),
+    [
+        ("1", 3.10, 1.0, 3.10),
+        ("3", 3.10, 3.0, 9.30),
+        ("2,5", 4.00, 2.5, 10.00),
+        ("1.75", 10.00, 1.75, 17.50),
+        ("", 5.00, 1.0, 5.00),  # Empty defaults to 1
+        ("invalid", 5.00, 1.0, 5.00),  # Unparseable defaults to 1
+    ],
+)
+def test_quantity_parsing_and_total_calculation(
+    tmp_path: Path,
+    fake_vat_csv_factory: Callable[[Sequence[dict[str, str]]], Path],
+    raw_qty: str,
+    unit_price: float,
+    expected_qty: float,
+    expected_total: float,
+) -> None:
+    """Verify robust quantity parsing and total pricing across various formats."""
+    custom_catalog = {"TEST_ASIN": unit_price}
+    report_file = fake_vat_csv_factory([
+        {
+            "transaction_type": "FC_TRANSFER",
+            "asin": "TEST_ASIN",
+            "qty": raw_qty,
+            "departure": "DE",
+            "arrival": "FR",
+        },
+    ])
+    output_file = tmp_path / "out.csv"
+
+    result = process_vat_report(report_file, custom_catalog, output_file, export_summary=False)
+    route = result.route_statistics[RouteKey("DE", "FR")]
+
+    assert result.fc_transfer_updated == 1
+    assert result.total_value_added == pytest.approx(expected_total, abs=0.01)
+    assert route.total_quantity == pytest.approx(expected_qty, abs=0.01)
+    assert route.total_amount_eur == pytest.approx(expected_total, abs=0.01)
+
+
+def test_missing_asin_handling(
+    tmp_path: Path,
+    fake_vat_csv_factory: Callable[[Sequence[dict[str, str]]], Path],
+) -> None:
+    """Verify that unmatched ASINs are cleanly tracked and left unfilled."""
+    custom_catalog = {"KNOWN_ASIN": 10.0}
+    report_file = fake_vat_csv_factory([
+        {
+            "transaction_type": "FC_TRANSFER",
+            "asin": "KNOWN_ASIN",
+            "qty": "2",
+            "departure": "DE",
+            "arrival": "FR",
+        },
+        {
+            "transaction_type": "FC_TRANSFER",
+            "asin": "UNKNOWN_ASIN_1",
+            "qty": "1",
+            "departure": "DE",
+            "arrival": "PL",
+        },
+        {
+            "transaction_type": "FC_TRANSFER",
+            "asin": "UNKNOWN_ASIN_2",
+            "qty": "1",
+            "departure": "FR",
+            "arrival": "IT",
+        },
+    ])
+    output_file = tmp_path / "out.csv"
+
+    result = process_vat_report(report_file, custom_catalog, output_file, export_summary=False)
+
+    assert result.fc_transfer_count == 3
+    assert result.fc_transfer_updated == 1
+    assert result.missing_asins == ["UNKNOWN_ASIN_1", "UNKNOWN_ASIN_2"]
+    assert result.missing_rows_count == 2
+    assert result.total_value_added == pytest.approx(20.00, abs=0.01)
+
+
+def test_cli_invocation_e2e(
+    tmp_path: Path,
+    sample_vat_report_path: Path,
+    price_catalog_path: Path,
+) -> None:
+    """Verify CLI script invocation produces identical output files."""
+    output_destination = tmp_path / "cli_output.csv"
+    script_path = Path(__file__).resolve().parent.parent / "src" / "vat_report" / "engine.py"
+
+    command = [
+        sys.executable,
+        str(script_path),
+        "--vat-report",
+        str(sample_vat_report_path),
+        "--price-catalog",
+        str(price_catalog_path),
+        "--output",
+        str(output_destination),
+    ]
+
+    execution = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+        command, capture_output=True, text=True, check=True
+    )
+
+    assert execution.returncode == 0
+    assert "AMAZON VAT REPORT PROCESSING COMPLETE" in execution.stdout
+    assert output_destination.exists()
+
+    with output_destination.open(encoding="utf-8-sig") as f:
+        assert len(list(csv.reader(f))) == 101

@@ -3,7 +3,7 @@ name = "tinite-automation"
 version = "0.2.0"
 description = "Tinite Automation - Amazon VAT Transaction Reporting and ASIN Asset Automation Monorepo"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "vat-report",
     "image-renamer",
@@ -30,6 +30,7 @@ image-renamer = { workspace = true }
 web-hub = { workspace = true }
 
 [tool.pytest.ini_options]
+addopts = "--durations=10"
 testpaths = [
     "libs/vat-report/tests",
     "libs/image-renamer/tests",
@@ -45,7 +46,7 @@ pythonpath = [
 index-url = "https://pypi.org/simple"
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 fix = true
 
@@ -66,7 +67,7 @@ ignore = [
     "implicit-namespace-package",                 # Implicit namespace package
     "print",                   # print found
 ]
-per-file-ignores = { "**/tests/**/*.py" = ["S101", "PLR2004", "D101", "D102", "D103", "ANN201", "ANN001", "ARG002"] }
+per-file-ignores = { "**/tests/**/*.py" = ["assert", "magic-value-comparison", "undocumented-public-class", "undocumented-public-method", "undocumented-public-function", "missing-return-type-undocumented-public-function", "missing-type-function-argument", "unused-method-argument", "too-many-arguments", "too-many-positional-arguments"] }
 future-annotations = true
 
 [tool.ruff.lint.flake8-annotations]

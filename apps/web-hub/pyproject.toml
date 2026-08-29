@@ -7,7 +7,7 @@ name = "web-hub"
 version = "0.2.0"
 description = "Amazon Automation Tools Web Hub Application"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "vat-report",
     "image-renamer",

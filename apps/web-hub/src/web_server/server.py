@@ -16,31 +16,50 @@ import time
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any, override
 
 from web_server.updater import check_update_available, perform_app_update
 
-STATIC_DIR: Path = Path(importlib.resources.files("web_server") / "static")
+logger: logging.Logger = logging.getLogger(__name__)
+
+STATIC_DIR: Path = Path(str(importlib.resources.files("web_server") / "static"))
 
 
 def get_package_file(package_name: str, filename: str = "engine.py") -> Path | None:
-    """Robustly locate a file within an installed workspace package via importlib.resources."""
+    """Robustly locate a file within an installed workspace package via importlib.resources.
+
+    Args:
+        package_name: Package name (e.g. "vat_report", "image_renamer").
+        filename: Target filename within the package.
+
+    Returns:
+        Path to the resource if found, or None.
+    """
     try:
-        path = Path(importlib.resources.files(package_name) / filename)
+        path = Path(str(importlib.resources.files(package_name) / filename))
         if path.is_file():
             return path
-    except Exception as err:
+    except (TypeError, ValueError, ModuleNotFoundError) as err:
         logger.warning("Could not resolve package resource %s/%s: %s", package_name, filename, err)
     return None
 
 
 class WebHubRequestHandler(SimpleHTTPRequestHandler):
-    """Custom request handler that serves apps/web-hub/static/ and provides Python engine files to Pyodide."""
+    """Custom request handler that serves static assets and provides engine files to Pyodide."""
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+    def __init__(
+        self,
+        request: Any,  # ruff: ignore[any-type]
+        client_address: tuple[str, int] | str,
+        server: ThreadingHTTPServer,
+        directory: str | None = None,
+    ) -> None:
+        """Initialize request handler serving from STATIC_DIR."""
+        super().__init__(request, client_address, server, directory=directory or str(STATIC_DIR))
 
+    @override
     def do_GET(self) -> None:
-        # Route API check update request
+        """Handle GET requests for static files, API status, and dynamic Python modules."""
         if self.path in {"/api/check-update", "/api/update-status"}:
             info = check_update_available()
             payload = json.dumps(info).encode("utf-8")
@@ -51,7 +70,6 @@ class WebHubRequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(payload)
             return
 
-        # Route Python module requests to workspace packages
         if self.path in {
             "/vat_report/engine.py",
             "/vat_report.py",
@@ -60,15 +78,18 @@ class WebHubRequestHandler(SimpleHTTPRequestHandler):
         }:
             source_file = get_package_file("vat_report", "engine.py")
             if source_file:
-                return self._serve_python_file(source_file)
+                self._serve_python_file(source_file)
+                return
         elif self.path in {"/image_renamer/engine.py", "/image_renamer.py"}:
             source_file = get_package_file("image_renamer", "engine.py")
             if source_file:
-                return self._serve_python_file(source_file)
+                self._serve_python_file(source_file)
+                return
+
         super().do_GET()
-        return None
 
     def do_POST(self) -> None:
+        """Handle POST requests for in-browser application updates."""
         if self.path in {"/api/update", "/update"}:
             result = perform_app_update()
             payload = json.dumps({"success": result.success, "message": result.message}).encode(
@@ -94,18 +115,26 @@ class WebHubRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    @override
     def end_headers(self) -> None:
+        """Send no-cache headers on all responses."""
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         super().end_headers()
 
-    def log_message(self, format: str, *args) -> None:
-        pass
+    @override
+    def log_message(self, format: str, *args: object) -> None:
+        """Silence standard console access logging."""
 
 
 def serve_web(starting_port: int = 8000, max_attempts: int = 25) -> None:
-    """Start local web server on an available port and open in default browser."""
+    """Start local web server on an available port and open in default browser.
+
+    Args:
+        starting_port: Port number to try first.
+        max_attempts: Maximum consecutive ports to check.
+    """
     server: ThreadingHTTPServer | None = None
     active_port = starting_port
 
@@ -150,6 +179,7 @@ def serve_web(starting_port: int = 8000, max_attempts: int = 25) -> None:
 
 
 def main() -> None:
+    """Entry point for the Web Hub HTTP server."""
     logging.basicConfig(level=logging.INFO, format="  [%(levelname)s] %(message)s")
     serve_web()
 

@@ -15,6 +15,8 @@ from vat_report.engine import load_price_catalog, process_batch, process_vat_rep
 
 
 class RoutePayload(TypedDict):
+    """Route data transfer metric payload."""
+
     departure: str
     arrival: str
     transfers: int
@@ -23,6 +25,8 @@ class RoutePayload(TypedDict):
 
 
 class FileSummaryPayload(TypedDict):
+    """Summary of a single report within a batch execution."""
+
     filename: str
     total_rows: int
     fc_transfer_count: int
@@ -33,6 +37,8 @@ class FileSummaryPayload(TypedDict):
 
 
 class SingleReportResponse(TypedDict):
+    """Execution response payload for single report processing."""
+
     mode: Literal["single"]
     total_rows: int
     fc_transfer_count: int
@@ -43,6 +49,8 @@ class SingleReportResponse(TypedDict):
 
 
 class BatchReportResponse(TypedDict):
+    """Execution response payload for batch report processing."""
+
     mode: Literal["batch"]
     files_count: int
     total_rows: int
@@ -55,6 +63,8 @@ class BatchReportResponse(TypedDict):
 
 
 class ImageManifestEntry(TypedDict):
+    """Manifest item representing a generated target image file."""
+
     asin: str
     source_filename: str
     target_folder: str
@@ -164,8 +174,12 @@ def run_parse_asins(source_text: str) -> str:
 
 def run_generate_image_manifest(image_names_json: str, asins_json: str) -> str:
     """Generate strongly typed image manifest for target ASINs and return JSON array."""
-    image_names: list[str] = json.loads(image_names_json)
-    asins: list[str] = json.loads(asins_json)
+    parsed_images = json.loads(image_names_json)
+    image_names: list[str] = (
+        [str(x) for x in parsed_images] if isinstance(parsed_images, list) else []
+    )
+    parsed_asins = json.loads(asins_json)
+    asins: list[str] = [str(x) for x in parsed_asins] if isinstance(parsed_asins, list) else []
     manifest = generate_image_manifest(image_names, asins)
 
     payload: list[ImageManifestEntry] = [

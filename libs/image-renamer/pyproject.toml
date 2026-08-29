@@ -7,7 +7,7 @@ name = "image-renamer"
 version = "0.2.0"
 description = "Amazon ASIN Image Duplicator & Renamer Engine"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "openpyxl>=3.1.0",
 ]

@@ -6,6 +6,7 @@ import csv
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import openpyxl
 import pytest
 
 if TYPE_CHECKING:
@@ -53,13 +54,12 @@ def fake_asin_file_factory(tmp_path: Path) -> Callable[[Sequence[str], str], Pat
                     writer.writerow([f"Product {idx}", asin, "Electronics"])
             return path
         if file_type == "xlsx":
-            import openpyxl
-
             wb = openpyxl.Workbook()
             ws = wb.active
-            ws.append(["Title", "ASIN", "Price"])
-            for idx, asin in enumerate(asins, 1):
-                ws.append([f"Item {idx}", asin, 19.99])
+            if ws is not None:
+                ws.append(["Title", "ASIN", "Price"])
+                for idx, asin in enumerate(asins, 1):
+                    ws.append([f"Item {idx}", asin, 19.99])
             path = tmp_path / "asins.xlsx"
             wb.save(path)
             wb.close()
