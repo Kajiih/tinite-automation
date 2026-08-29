@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Amazon VAT Report - FC_Transfer Price Automation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    .dropzone {
+      transition: all 0.2s ease-in-out;
+    }
+    .dropzone.dragover {
+      border-color: #3b82f6;
+      background-color: #eff6ff;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col font-sans">
+
+  <!-- Navigation Bar -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="bg-blue-600 text-white p-2 rounded-lg font-bold text-lg leading-none shadow-sm">
+          📦
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-slate-900 leading-tight">Amazon VAT Report Automation</h1>
+          <p class="text-xs text-slate-500">FC_Transfer Price Automation & Country Summaries</p>
+        </div>
+      </div>
+      <div id="engine-status" class="flex items-center space-x-2 text-xs bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-full font-medium">
+        <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+        <span id="engine-status-text">Loading WebAssembly Engine...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
+
+    <!-- Privacy Notice -->
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start space-x-3">
+      <span class="text-blue-600 text-xl leading-none">🔒</span>
+      <div class="text-sm text-blue-900">
+        <p class="font-semibold">100% Private & Client-Side</p>
+        <p class="text-blue-700 text-xs mt-0.5">
+          All processing runs locally inside your browser using Python WebAssembly. No files, financial data, or prices are uploaded to any server.
+        </p>
+      </div>
+    </div>
+
+    <!-- Error Banner (Full Traceback Display) -->
+    <div id="error-banner" class="hidden bg-red-50 border-2 border-red-300 rounded-2xl p-6 shadow-sm space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2 text-red-900 font-bold text-base">
+          <span>❌</span>
+          <span id="error-title">Processing Error</span>
+        </div>
+        <button onclick="document.getElementById('error-banner').classList.add('hidden')" class="text-xs font-semibold text-red-700 hover:text-red-900 bg-red-100 px-2.5 py-1 rounded-md">
+          Dismiss
+        </button>
+      </div>
+      <p class="text-xs text-red-800" id="error-summary">An error occurred during Python WebAssembly execution.</p>
+      <pre id="error-traceback" class="bg-slate-900 text-red-300 font-mono text-xs p-4 rounded-xl overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-96"></pre>
+    </div>
+
+    <!-- Drop Zones Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      
+      <!-- VAT Report Drop Zone -->
+      <div id="dropzone-report" class="dropzone relative border-2 border-dashed border-slate-300 rounded-2xl p-6 bg-white flex flex-col items-center justify-center text-center cursor-pointer hover:border-blue-500 shadow-sm">
+        <input type="file" id="file-report" accept=".csv" multiple class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+        <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-2xl mb-3">
+          📄
+        </div>
+        <h3 class="font-semibold text-slate-800 text-sm">1. Select VAT Report CSV(s)</h3>
+        <p class="text-xs text-slate-500 mt-1" id="label-report">Drag & drop CSV file(s) here or click to browse</p>
+        <div id="badge-report" class="mt-3 hidden text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-md"></div>
+      </div>
+
+      <!-- Price Catalog Drop Zone -->
+      <div id="dropzone-catalog" class="dropzone relative border-2 border-dashed border-slate-300 rounded-2xl p-6 bg-white flex flex-col items-center justify-center text-center cursor-pointer hover:border-blue-500 shadow-sm">
+        <input type="file" id="file-catalog" accept=".xlsx" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+        <div class="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center text-2xl mb-3">
+          📊
+        </div>
+        <h3 class="font-semibold text-slate-800 text-sm">2. Select Excel Price Catalog</h3>
+        <p class="text-xs text-slate-500 mt-1" id="label-catalog">Drag & drop Excel (.xlsx) file here or click to browse</p>
+        <div id="badge-catalog" class="mt-3 hidden text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-md"></div>
+      </div>
+
+    </div>
+
+    <!-- Processing Loader -->
+    <div id="processing-loader" class="hidden bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4 shadow-sm">
+      <div class="inline-block animate-spin text-3xl">⚙️</div>
+      <h3 class="font-semibold text-slate-800 text-base" id="processing-text">Processing VAT reports in WebAssembly...</h3>
+      <p class="text-xs text-slate-500">Matching ASIN cost prices and aggregating cross-border country routes.</p>
+    </div>
+
+    <!-- Results Section -->
+    <div id="results-section" class="hidden space-y-6">
+
+      <!-- Metrics Cards -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Rows</p>
+          <p class="text-2xl font-bold text-slate-900 mt-1" id="metric-total-rows">0</p>
+        </div>
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">FC_TRANSFER Rows</p>
+          <p class="text-2xl font-bold text-blue-600 mt-1" id="metric-fc-rows">0</p>
+        </div>
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Value Added</p>
+          <p class="text-2xl font-bold text-emerald-600 mt-1" id="metric-value-added">€0.00</p>
+        </div>
+        <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+          <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Missing ASINs</p>
+          <p class="text-2xl font-bold text-slate-900 mt-1" id="metric-missing-asins">0</p>
+        </div>
+      </div>
+
+      <!-- Warning Box for Missing ASINs -->
+      <div id="warning-missing-asins" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
+        <p class="font-semibold flex items-center">
+          <span class="mr-2">⚠️</span> Some ASINs were not found in the price catalog:
+        </p>
+        <ul id="list-missing-asins" class="list-disc list-inside text-xs mt-2 space-y-1 text-amber-800"></ul>
+      </div>
+
+      <!-- Route Breakdown Table & Action Buttons -->
+      <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        
+        <div class="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h3 class="font-bold text-slate-900 text-base">Departure Country × Arrival Country Summary</h3>
+            <p class="text-xs text-slate-500">Cross-border transfer aggregation for FC_TRANSFER transactions</p>
+          </div>
+          <div class="flex flex-wrap gap-2" id="download-buttons-container">
+            <!-- Dynamic Download Buttons Injected Here -->
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
+              <tr>
+                <th class="px-5 py-3">Departure</th>
+                <th class="px-5 py-3">Arrival</th>
+                <th class="px-5 py-3 text-right">Transfer Count</th>
+                <th class="px-5 py-3 text-right">Total Units</th>
+                <th class="px-5 py-3 text-right">Total Amount (€)</th>
+              </tr>
+            </thead>
+            <tbody id="table-routes-body" class="divide-y divide-slate-100 font-mono text-xs">
+              <!-- Route Rows Injected Here -->
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
+    Amazon VAT Report Automation • Powered by Python WebAssembly (Pyodide)
+  </footer>
+
+  <!-- Application Logic -->
+  <script>
+    let pyodideInstance = null;
+    let selectedReportFiles = [];
+    let selectedCatalogFile = null;
+
+    const pythonBridgeScript = `
+import json
+import csv
+from pathlib import Path
+from process_report import process_vat_report, process_batch, load_price_catalog
+
+def run_single(report_filename, catalog_filename):
+    price_catalog = load_price_catalog(Path(catalog_filename))
+    result = process_vat_report(
+        Path(report_filename),
+        price_catalog,
+        Path("/output.csv"),
+        export_summary=True,
+    )
+    
+    routes = []
+    for key, metric in sorted(result.route_statistics.items()):
+        routes.append({
+            "departure": key.departure_country,
+            "arrival": key.arrival_country,
+            "transfers": metric.transfer_count,
+            "quantity": metric.total_quantity,
+            "amount": metric.total_amount_eur,
+        })
+        
+    return json.dumps({
+        "mode": "single",
+        "total_rows": result.total_rows,
+        "fc_transfer_count": result.fc_transfer_count,
+        "fc_transfer_updated": result.fc_transfer_updated,
+        "total_value_added": result.total_value_added,
+        "missing_asins": result.missing_asins,
+        "routes": routes,
+    })
+
+def run_batch(input_dir_name, catalog_filename):
+    batch_result = process_batch(
+        Path(input_dir_name),
+        Path(catalog_filename),
+    )
+    
+    routes = []
+    for key, metric in sorted(batch_result.consolidated_routes.items()):
+        routes.append({
+            "departure": key.departure_country,
+            "arrival": key.arrival_country,
+            "transfers": metric.transfer_count,
+            "quantity": metric.total_quantity,
+            "amount": metric.total_amount_eur,
+        })
+        
+    return json.dumps({
+        "mode": "batch",
+        "files_count": batch_result.files_count,
+        "total_rows": batch_result.grand_total_rows,
+        "fc_transfer_count": batch_result.grand_fc_transfers,
+        "fc_transfer_updated": batch_result.grand_fc_updated,
+        "total_value_added": batch_result.grand_value_added,
+        "missing_asins": sorted(list(batch_result.all_missing_asins)),
+        "routes": routes,
+    })
+`;
+
+    function showError(title, message, traceback) {
+      const banner = document.getElementById("error-banner");
+      const titleEl = document.getElementById("error-title");
+      const summaryEl = document.getElementById("error-summary");
+      const tracebackEl = document.getElementById("error-traceback");
+
+      titleEl.textContent = title;
+      summaryEl.textContent = message;
+      tracebackEl.textContent = traceback || message;
+      banner.classList.remove("hidden");
+      banner.scrollIntoView({ behavior: "smooth" });
+    }
+
+    function hideError() {
+      document.getElementById("error-banner").classList.add("hidden");
+    }
+
+    async function initPyodide() {
+      const engineStatus = document.getElementById("engine-status");
+      const engineStatusText = document.getElementById("engine-status-text");
+
+      try {
+        engineStatusText.textContent = "Loading WebAssembly Engine...";
+        pyodideInstance = await loadPyodide({
+          indexURL: "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/"
+        });
+
+        engineStatusText.textContent = "Loading micropip package installer...";
+        await pyodideInstance.loadPackage("micropip");
+        const micropip = pyodideInstance.pyimport("micropip");
+
+        engineStatusText.textContent = "Installing openpyxl in browser...";
+        await micropip.install("openpyxl");
+
+        // Dynamically fetch process_report.py from server
+        engineStatusText.textContent = "Loading process_report.py...";
+        const response = await fetch("/process_report.py");
+        if (!response.ok) {
+          throw new Error(`Failed to fetch process_report.py (HTTP ${response.status})`);
+        }
+        const processReportPyCode = await response.text();
+
+        pyodideInstance.FS.writeFile("process_report.py", processReportPyCode);
+        pyodideInstance.runPython(pythonBridgeScript);
+
+        engineStatus.className = "flex items-center space-x-2 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-full font-medium";
+        engineStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span>WebAssembly Ready</span>';
+      } catch (err) {
+        console.error("Pyodide initialization error:", err);
+        const isLocalFile = window.location.protocol === "file:";
+        const hint = isLocalFile 
+          ? " (Local file protocol: launch using './run.command' or 'run.bat' to start the local server)" 
+          : "";
+        engineStatus.className = "flex items-center space-x-2 text-xs bg-red-50 text-red-800 border border-red-200 px-3 py-1.5 rounded-full font-medium";
+        engineStatus.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500"></span><span>Init Error: ${err.message}${hint}</span>`;
+        showError("Initialization Error", err.message, err.stack || err.toString());
+      }
+    }
+
+    // UI Dropzone Setup
+    const fileReportInput = document.getElementById("file-report");
+    const fileCatalogInput = document.getElementById("file-catalog");
+    const badgeReport = document.getElementById("badge-report");
+    const badgeCatalog = document.getElementById("badge-catalog");
+    const labelReport = document.getElementById("label-report");
+    const labelCatalog = document.getElementById("label-catalog");
+
+    fileReportInput.addEventListener("change", (e) => {
+      selectedReportFiles = Array.from(e.target.files);
+      if (selectedReportFiles.length > 0) {
+        badgeReport.classList.remove("hidden");
+        badgeReport.textContent = selectedReportFiles.length === 1 
+          ? `✓ ${selectedReportFiles[0].name}`
+          : `✓ ${selectedReportFiles.length} CSV files selected`;
+        labelReport.textContent = "Click to change selection";
+        hideError();
+        checkAndTriggerProcessing();
+      }
+    });
+
+    fileCatalogInput.addEventListener("change", (e) => {
+      if (e.target.files.length > 0) {
+        selectedCatalogFile = e.target.files[0];
+        badgeCatalog.classList.remove("hidden");
+        badgeCatalog.textContent = `✓ ${selectedCatalogFile.name}`;
+        labelCatalog.textContent = "Click to change selection";
+        hideError();
+        checkAndTriggerProcessing();
+      }
+    });
+
+    async function checkAndTriggerProcessing() {
+      if (selectedReportFiles.length > 0 && selectedCatalogFile) {
+        await executeProcessing();
+      }
+    }
+
+    async function executeProcessing() {
+      if (!pyodideInstance) {
+        showError("Engine Not Ready", "WebAssembly engine is still loading. Please wait a moment.");
+        return;
+      }
+
+      const loader = document.getElementById("processing-loader");
+      const resultsSection = document.getElementById("results-section");
+      loader.classList.remove("hidden");
+      resultsSection.classList.add("hidden");
+      hideError();
+
+      try {
+        // Write Excel catalog to Pyodide FS
+        const catalogBuffer = await selectedCatalogFile.arrayBuffer();
+        pyodideInstance.FS.writeFile("/catalog.xlsx", new Uint8Array(catalogBuffer));
+
+        let summaryJsonString = "";
+        let isBatch = selectedReportFiles.length > 1;
+
+        if (!isBatch) {
+          const reportFile = selectedReportFiles[0];
+          const reportBuffer = await reportFile.arrayBuffer();
+          pyodideInstance.FS.writeFile("/input.csv", new Uint8Array(reportBuffer));
+
+          summaryJsonString = pyodideInstance.runPython(`run_single("/input.csv", "/catalog.xlsx")`);
+        } else {
+          try { pyodideInstance.FS.mkdir("/batch_input"); } catch (e) {}
+          try { pyodideInstance.FS.mkdir("/batch_input/processed"); } catch (e) {}
+
+          for (const file of selectedReportFiles) {
+            const buffer = await file.arrayBuffer();
+            pyodideInstance.FS.writeFile(`/batch_input/${file.name}`, new Uint8Array(buffer));
+          }
+
+          summaryJsonString = pyodideInstance.runPython(`run_batch("/batch_input", "/catalog.xlsx")`);
+        }
+
+        const summary = JSON.parse(summaryJsonString);
+        renderResults(summary, isBatch);
+      } catch (err) {
+        console.error("Processing error:", err);
+        showError("Python Processing Error", err.message || "Execution failed", err.toString());
+      } finally {
+        loader.classList.add("hidden");
+      }
+    }
+
+    function renderResults(summary, isBatch) {
+      document.getElementById("results-section").classList.remove("hidden");
+      document.getElementById("metric-total-rows").textContent = Number(summary.total_rows).toLocaleString();
+      document.getElementById("metric-fc-rows").textContent = Number(summary.fc_transfer_updated).toLocaleString();
+      document.getElementById("metric-value-added").textContent = `€${Number(summary.total_value_added).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      document.getElementById("metric-missing-asins").textContent = summary.missing_asins.length;
+
+      // Missing ASINs Warning
+      const warningBox = document.getElementById("warning-missing-asins");
+      const listMissing = document.getElementById("list-missing-asins");
+      if (summary.missing_asins && summary.missing_asins.length > 0) {
+        warningBox.classList.remove("hidden");
+        listMissing.innerHTML = summary.missing_asins.map(asin => `<li>${asin}</li>`).join("");
+      } else {
+        warningBox.classList.add("hidden");
+      }
+
+      // Render Routes Table
+      const tbody = document.getElementById("table-routes-body");
+      let grandTransfers = 0;
+      let grandQty = 0;
+      let grandAmount = 0;
+
+      const rowsHtml = summary.routes.map(r => {
+        grandTransfers += r.transfers;
+        grandQty += r.quantity;
+        grandAmount += r.amount;
+
+        const qtyFormatted = Number.isInteger(r.quantity) ? r.quantity : r.quantity.toFixed(2);
+        return `
+          <tr class="hover:bg-slate-50">
+            <td class="px-5 py-2.5 font-bold text-slate-800">${r.departure}</td>
+            <td class="px-5 py-2.5 font-bold text-slate-800">${r.arrival}</td>
+            <td class="px-5 py-2.5 text-right font-mono text-slate-600">${r.transfers.toLocaleString()}</td>
+            <td class="px-5 py-2.5 text-right font-mono text-slate-600">${qtyFormatted}</td>
+            <td class="px-5 py-2.5 text-right font-mono font-semibold text-slate-900">€${r.amount.toFixed(2)}</td>
+          </tr>
+        `;
+      }).join("");
+
+      const totalRowHtml = `
+        <tr class="bg-slate-100 font-bold border-t-2 border-slate-300">
+          <td class="px-5 py-3 text-slate-900" colspan="2">TOTAL</td>
+          <td class="px-5 py-3 text-right font-mono text-slate-900">${grandTransfers.toLocaleString()}</td>
+          <td class="px-5 py-3 text-right font-mono text-slate-900">${Number.isInteger(grandQty) ? grandQty : grandQty.toFixed(2)}</td>
+          <td class="px-5 py-3 text-right font-mono text-blue-600 text-sm">€${grandAmount.toFixed(2)}</td>
+        </tr>
+      `;
+
+      tbody.innerHTML = rowsHtml + totalRowHtml;
+
+      // Render Download Buttons
+      renderDownloadButtons(isBatch);
+    }
+
+    function renderDownloadButtons(isBatch) {
+      const container = document.getElementById("download-buttons-container");
+      container.innerHTML = "";
+
+      if (!isBatch) {
+        const btnProcessed = document.createElement("button");
+        btnProcessed.className = "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
+        btnProcessed.textContent = "⬇ Download Processed CSV";
+        btnProcessed.onclick = () => {
+          const content = pyodideInstance.FS.readFile("/output.csv");
+          downloadBlob(content, "vat_report_processed.csv", "text/csv;charset=utf-8");
+        };
+
+        const btnSummary = document.createElement("button");
+        btnSummary.className = "bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
+        btnSummary.textContent = "⬇ Download Country Summary CSV";
+        btnSummary.onclick = () => {
+          const content = pyodideInstance.FS.readFile("/output_country_summary.csv");
+          downloadBlob(content, "country_summary.csv", "text/csv;charset=utf-8");
+        };
+
+        container.appendChild(btnProcessed);
+        container.appendChild(btnSummary);
+      } else {
+        const btnZip = document.createElement("button");
+        btnZip.className = "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition";
+        btnZip.textContent = "⬇ Download Batch Archive (.zip)";
+        btnZip.onclick = async () => {
+          const zip = new JSZip();
+          for (const file of selectedReportFiles) {
+            try {
+              const processedContent = pyodideInstance.FS.readFile(`/batch_input/processed/${file.name}`);
+              zip.file(`processed_${file.name}`, processedContent);
+            } catch (e) {}
+          }
+          try {
+            const batchSummaryContent = pyodideInstance.FS.readFile("/batch_input/processed/batch_country_summary.csv");
+            zip.file("batch_country_summary.csv", batchSummaryContent);
+          } catch (e) {}
+
+          const zipBlob = await zip.generateAsync({ type: "blob" });
+          const url = URL.createObjectURL(zipBlob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "batch_processed_reports.zip";
+          a.click();
+          URL.revokeObjectURL(url);
+        };
+        container.appendChild(btnZip);
+      }
+    }
+
+    function downloadBlob(data, filename, mimeType) {
+      const blob = new Blob([data], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Initialize on window load
+    window.addEventListener("DOMContentLoaded", initPyodide);
+  </script>
+</body>
+</html>

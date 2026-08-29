@@ -1,62 +1,39 @@
 @echo off
-rem Double-clickable launcher for Windows (powered by uv)
-setlocal
+setlocal enabledelayedexpansion
 
+:: Navigate to repository root directory
 cd /d "%~dp0"
 
-echo ==========================================================================
-echo     Amazon VAT Report - FC_Transfer Price Automation ^& Country Summary
-echo ==========================================================================
-echo.
-
-set "UV_CMD=uv"
-
-rem Check if uv is available in current PATH
+:: Check common paths for uv.exe if not in standard PATH
 where uv >nul 2>nul
-if %ERRORLEVEL% equ 0 goto run_script
-
-rem Check standard Windows installation directories for uv.exe
-if exist "%USERPROFILE%\.local\bin\uv.exe" (
-    set "UV_CMD=%USERPROFILE%\.local\bin\uv.exe"
-    goto run_script
-)
-if exist "%USERPROFILE%\.cargo\bin\uv.exe" (
-    set "UV_CMD=%USERPROFILE%\.cargo\bin\uv.exe"
-    goto run_script
-)
-if exist "%LOCALAPPDATA%\Programs\uv\uv.exe" (
-    set "UV_CMD=%LOCALAPPDATA%\Programs\uv\uv.exe"
-    goto run_script
+if %errorlevel% neq 0 (
+    if exist "%USERPROFILE%\.local\bin\uv.exe" (
+        set "PATH=%USERPROFILE%\.local\bin;!PATH!"
+    ) else if exist "%USERPROFILE%\.cargo\bin\uv.exe" (
+        set "PATH=%USERPROFILE%\.cargo\bin;!PATH!"
+    ) else if exist "%LOCALAPPDATA%\Programs\uv\uv.exe" (
+        set "PATH=%LOCALAPPDATA%\Programs\uv;!PATH!"
+    )
 )
 
-rem If uv is not found anywhere, install it via official PowerShell installer
-echo uv was not found on your system. Installing uv...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
-
-if exist "%USERPROFILE%\.local\bin\uv.exe" (
-    set "UV_CMD=%USERPROFILE%\.local\bin\uv.exe"
-    goto run_script
-)
-if exist "%USERPROFILE%\.cargo\bin\uv.exe" (
-    set "UV_CMD=%USERPROFILE%\.cargo\bin\uv.exe"
-    goto run_script
-)
-
+:: Auto-install uv if still not found
 where uv >nul 2>nul
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo [ERROR] Failed to find or install uv automatically.
-    echo Please install uv manually from https://astral.sh/uv or install Python 3.11+.
-    echo.
-    goto cleanup
+if %errorlevel% neq 0 (
+    echo ========================================================
+    echo  'uv' is not installed. Installing automatically...
+    echo ========================================================
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    set "PATH=%USERPROFILE%\.local\bin;%USERPROFILE%\.cargo\bin;!PATH!"
 )
 
-:run_script
-"%UV_CMD%" run process_report.py %*
+:: Verify uv installation
+where uv >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Error: Failed to install 'uv'. Please install it from https://astral.sh/uv
+    pause
+    exit /b 1
+)
 
-:cleanup
-echo.
-echo ==========================================================================
-echo Execution finished. Press any key to close this window.
-echo ==========================================================================
+:: Execute Python application (opens Web App by default or CLI with arguments)
+uv run python -m amazon_vat_automation.process_report %*
 pause >nul

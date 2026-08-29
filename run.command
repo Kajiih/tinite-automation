@@ -1,26 +1,26 @@
-#!/usr/bin/env bash
-# Double-clickable launcher for macOS (powered by uv)
-set -euo pipefail
+#!/bin/bash
+set -e
 
+# Change directory to the repository root
 cd "$(dirname "$0")"
 
-echo "=========================================================================="
-echo "    Amazon VAT Report - FC_Transfer Price Automation & Country Summary"
-echo "=========================================================================="
-echo ""
+# Expand common user and Homebrew binary paths
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-# Ensure standard user & Homebrew binary paths are in PATH
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-
-# Auto-install uv if not present on system
+# Auto-install uv if not found
 if ! command -v uv &> /dev/null; then
-    echo "Installing uv (fast Python package runner)..."
+    echo "========================================================"
+    echo " 'uv' is not installed. Installing automatically..."
+    echo "========================================================"
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 
-uv run process_report.py "$@"
+if ! command -v uv &> /dev/null; then
+    echo "Error: Failed to install 'uv'. Please install it from https://astral.sh/uv"
+    read -p "Press Enter to exit..."
+    exit 1
+fi
 
-echo ""
-echo "Press [Enter] to close this window..."
-read -r
+# Execute Python application (opens Web App by default or CLI with arguments)
+uv run python -m amazon_vat_automation.process_report "$@"

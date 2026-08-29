@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 import pytest
 
-from process_report import (
+from amazon_vat_automation.process_report import (
     ColumnHeader,
     TransactionType,
     load_price_catalog,
@@ -23,7 +23,7 @@ from process_report import (
 BASE_DIRECTORY: Path = Path(__file__).parent.parent
 SAMPLE_REPORT_PATH: Path = BASE_DIRECTORY / "example_data" / "sample_vat_report.csv"
 PRICE_CATALOG_PATH: Path = BASE_DIRECTORY / "example_data" / "amazon_asin_prix_achat_cogs_maj.xlsx"
-SCRIPT_PATH: Path = BASE_DIRECTORY / "process_report.py"
+SCRIPT_PATH: Path = BASE_DIRECTORY / "src" / "amazon_vat_automation" / "process_report.py"
 
 EXPECTED_SINGLE_COUNTRY_SUMMARY: Sequence[Sequence[str]] = [
     ["DEPARTURE_COUNTRY", "ARRIVAL_COUNTRY", "TRANSFER_COUNT", "TOTAL_QTY", "TOTAL_AMOUNT_EUR"],
@@ -222,7 +222,7 @@ def test_column_fallback_warning_logging(tmp_path: Path, price_catalog, caplog):
         writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
         writer.writerows(rows)
 
-    with caplog.at_level(logging.WARNING, logger="process_report"):
+    with caplog.at_level(logging.WARNING, logger="amazon_vat_automation.process_report"):
         result = process_vat_report(
             report_path=test_csv_path,
             price_catalog=price_catalog,

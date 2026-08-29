@@ -1,26 +1,59 @@
 # Amazon VAT Report - FC_Transfer Price Automation
 
-Fills unit prices and line totals for `FC_TRANSFER` rows in Amazon VAT Transaction Reports (AVTR) using an Excel price catalog, and generates Departure Country × Arrival Country cross-border summaries.
+Production-grade automation to populate unit cost (Column T: `COST_PRICE_OF_ITEMS`) and line total (Column U: `PRICE_OF_ITEMS_AMT_VAT_EXCL`) for `FC_TRANSFER` rows in Amazon VAT Transaction Reports (AVTR) based on an Excel price catalog, and calculate Departure Country × Arrival Country cross-border summaries.
 
 ---
 
 ## Quickstart
 
-### Option 1: Double-Click Launcher
-1. Double-click `run.command` (macOS) or `run.bat` (Windows).
-2. Drag and drop your VAT report CSV file or folder containing reports, then press **Enter**.
-3. Drag and drop your Excel price catalog (`.xlsx`), then press **Enter**.
+### 1. 1-Click Double-Click Launcher (Default: Web App)
+- **macOS**: Double-click `run.command`
+- **Windows**: Double-click `run.bat`
+
+*Starts the local web server on an available port and automatically opens the application in your browser.*
 
 ---
 
-### Option 2: Command Line (CLI)
+### 2. Command Line (CLI)
 
+#### Interactive Terminal Mode:
 ```bash
-# Single file
-uv run process_report.py --vat-report "example_data/sample_vat_report.csv" --price-catalog "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
+uv run process-report --cli
+# or via launcher:
+./run.command --cli
+```
 
-# Batch folder
-uv run process_report.py --vat-report "example_data/" --price-catalog "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
+#### Direct Invocation:
+```bash
+# Single file processing
+uv run process-report --vat-report "example_data/sample_vat_report.csv" --price-catalog "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
+
+# Batch folder processing
+uv run process-report --vat-report "example_data/" --price-catalog "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
+```
+
+---
+
+## Project Structure
+
+```
+amazon-vat-report-automation/
+├── .gitignore
+├── pyproject.toml
+├── README.md
+├── run.command                     # macOS 1-click launcher
+├── run.bat                         # Windows 1-click launcher
+├── example_data/                   # Sample CSV reports and Excel catalog
+│   ├── sample_vat_report.csv
+│   └── amazon_asin_prix_achat_cogs_maj.xlsx
+├── src/
+│   └── amazon_vat_automation/
+│       ├── __init__.py
+│       └── process_report.py       # Core domain engine, CLI, & Web server
+├── web/
+│   └── index.html                  # WebAssembly browser application
+└── tests/
+    └── test_e2e.py                 # End-to-end test suite
 ```
 
 ---

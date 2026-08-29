@@ -18,16 +18,11 @@ dev = [
 ]
 
 [project.scripts]
-process-report = "process_report:main"
+process-report = "amazon_vat_automation.process_report:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
-only-include = ["process_report.py"]
+packages = ["src/amazon_vat_automation"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-default = true
+pythonpath = ["src"]
