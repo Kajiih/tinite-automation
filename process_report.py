@@ -1,9 +1,3 @@
-# /// script
-# requires-python = ">=3.9"
-# dependencies = [
-#     "openpyxl",
-# ]
-# ///
 """
 Amazon VAT Transaction Report - FC_Transfer Price Automation
 
@@ -21,57 +15,155 @@ import argparse
 import csv
 import sys
 from collections import defaultdict
+from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence, Set
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-def clean_path_input(raw_input: str) -> Path:
-    """Sanitize path strings from CLI arguments or terminal drag-and-drop."""
-    cleaned = raw_input.strip().strip("'\"").strip()
-    return Path(cleaned).expanduser().resolve()
+class TransactionType(StrEnum):
+    """Supported transaction types in Amazon VAT transaction reports."""
+    FC_TRANSFER = "FC_TRANSFER"
+    SALE = "SALE"
+    REFUND = "REFUND"
+    RETURN = "RETURN"
 
 
-def load_price_catalog(excel_path: Path | str) -> Dict[str, float]:
+class ColumnHeader(StrEnum):
+    """Standard column header names in Amazon VAT transaction reports."""
+    TRANSACTION_TYPE = "TRANSACTION_TYPE"
+    ASIN = "ASIN"
+    QUANTITY = "QTY"
+    COST_PRICE_OF_ITEMS = "COST_PRICE_OF_ITEMS"
+    PRICE_OF_ITEMS_AMT_VAT_EXCL = "PRICE_OF_ITEMS_AMT_VAT_EXCL"
+    TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL = "TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL"
+    TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL = "TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL"
+    DEPARTURE_COUNTRY = "DEPARTURE_COUNTRY"
+    ARRIVAL_COUNTRY = "ARRIVAL_COUNTRY"
+
+
+UNKNOWN_COUNTRY_CODE: str = "UNKNOWN"
+DEFAULT_ENCODING: str = "utf-8-sig"
+CSV_LINE_TERMINATOR: str = "\r\n"
+
+
+@dataclass(frozen=True, order=True)
+class RouteKey:
+    """Represents a cross-border transfer route (Departure Country -> Arrival Country)."""
+    departure_country: str
+    arrival_country: str
+
+    def __str__(self) -> str:
+        return f"{self.departure_country} -> {self.arrival_country}"
+
+
+@dataclass
+class RouteMetric:
+    """Accumulator for cross-border transfer statistics along a specific route."""
+    transfer_count: int = 0
+    total_quantity: float = 0.0
+    total_amount_eur: float = 0.0
+
+    def add_transfer(self, quantity: float, amount_eur: float) -> None:
+        """Add a single transfer event to the accumulated route metrics."""
+        self.transfer_count += 1
+        self.total_quantity += quantity
+        self.total_amount_eur += amount_eur
+
+    def merge_metrics(self, other: RouteMetric) -> None:
+        """Merge metrics from another route accumulator."""
+        self.transfer_count += other.transfer_count
+        self.total_quantity += other.total_quantity
+        self.total_amount_eur += other.total_amount_eur
+
+
+@dataclass
+class FileProcessingResult:
+    """Detailed summary statistics for a single processed VAT report."""
+    report_path: Path
+    output_path: Path
+    summary_path: Path | None
+    total_rows: int
+    fc_transfer_count: int
+    fc_transfer_updated: int
+    missing_asins: Sequence[str]
+    missing_rows_count: int
+    total_value_added: float
+    route_statistics: Mapping[RouteKey, RouteMetric]
+
+
+@dataclass
+class BatchProcessingResult:
+    """Consolidated summary statistics for an entire batch of processed VAT reports."""
+    input_directory: Path
+    output_directory: Path
+    batch_summary_path: Path
+    price_catalog_path: Path
+    catalog_size: int
+    files_count: int
+    file_results: Sequence[FileProcessingResult]
+    grand_total_rows: int = 0
+    grand_fc_transfers: int = 0
+    grand_fc_updated: int = 0
+    grand_value_added: float = 0.0
+    all_missing_asins: Set[str] = field(default_factory=set)
+    consolidated_routes: MutableMapping[RouteKey, RouteMetric] = field(
+        default_factory=lambda: defaultdict(RouteMetric)
+    )
+
+
+def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
     """
-    Load ASIN -> unit price mapping from the Excel catalog (.xlsx).
+    Load ASIN -> unit price mapping from an Excel catalog (.xlsx).
     
-    Dynamically identifies ASIN and Price columns by header name,
-    falling back to columns 0 and 1 if standard headers are not found.
+    Dynamically scans worksheets to locate the ASIN and unit price columns,
+    robustly parsing numbers with commas, periods, and currency symbols.
     """
     import openpyxl
 
-    path = Path(excel_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Excel price catalog not found: {path}")
+    if not price_catalog_path.exists():
+        raise FileNotFoundError(f"Excel price catalog file not found at: {price_catalog_path}")
 
-    workbook = openpyxl.load_workbook(filename=path, data_only=True, read_only=True)
-    sheet = workbook.active
-    if sheet is None:
-        raise ValueError(f"No active worksheet found in: {path}")
+    workbook = openpyxl.load_workbook(filename=price_catalog_path, data_only=True, read_only=True)
+    target_worksheet = None
+    asin_column_index: int = 0
+    price_column_index: int = 1
 
-    rows_iter = sheet.iter_rows(values_only=True)
-    header_row = next(rows_iter, None)
-    if not header_row:
-        raise ValueError(f"Excel file is empty: {path}")
-
-    asin_col_idx = 0
-    price_col_idx = 1
-
-    for idx, cell in enumerate(header_row):
-        if cell is None:
-            continue
-        cell_str = str(cell).strip().lower()
-        if "asin" in cell_str:
-            asin_col_idx = idx
-        elif any(kw in cell_str for kw in ["price cost", "prix d'achat", "cogs", "cost", "price", "prix"]):
-            price_col_idx = idx
-
-    price_map: Dict[str, float] = {}
-    for row in rows_iter:
-        if not row or len(row) <= asin_col_idx:
+    for sheet_name in workbook.sheetnames:
+        worksheet = workbook[sheet_name]
+        first_row = next(worksheet.iter_rows(values_only=True), None)
+        if not first_row:
             continue
 
-        raw_asin = row[asin_col_idx]
+        found_asin_header = False
+        for column_index, cell_value in enumerate(first_row):
+            if cell_value is None:
+                continue
+            normalized_header = str(cell_value).strip().lower()
+            if "asin" in normalized_header:
+                asin_column_index = column_index
+                found_asin_header = True
+            elif any(
+                keyword in normalized_header
+                for keyword in ["price cost", "prix d'achat", "cogs", "cost", "price", "prix"]
+            ):
+                price_column_index = column_index
+
+        if found_asin_header:
+            target_worksheet = worksheet
+            break
+
+    if target_worksheet is None:
+        target_worksheet = workbook.active
+        if target_worksheet is None:
+            raise ValueError(f"No readable worksheets found in Excel file: {price_catalog_path}")
+
+    price_catalog: MutableMapping[str, float] = {}
+    for row_values in target_worksheet.iter_rows(min_row=2, values_only=True):
+        if not row_values or len(row_values) <= asin_column_index:
+            continue
+
+        raw_asin = row_values[asin_column_index]
         if raw_asin is None:
             continue
 
@@ -79,7 +171,7 @@ def load_price_catalog(excel_path: Path | str) -> Dict[str, float]:
         if not asin or asin.lower() == "asin":
             continue
 
-        raw_price = row[price_col_idx] if len(row) > price_col_idx else None
+        raw_price = row_values[price_column_index] if len(row_values) > price_column_index else None
         if raw_price is None:
             continue
 
@@ -87,27 +179,33 @@ def load_price_catalog(excel_path: Path | str) -> Dict[str, float]:
             if isinstance(raw_price, (int, float)):
                 price = float(raw_price)
             else:
-                price = float(str(raw_price).replace(",", ".").strip())
-            price_map[asin] = price
+                sanitized_price_string = (
+                    str(raw_price)
+                    .replace(",", ".")
+                    .replace("€", "")
+                    .replace("\xa0", "")
+                    .strip()
+                )
+                price = float(sanitized_price_string)
+            price_catalog[asin] = price
         except (ValueError, TypeError):
             continue
 
     workbook.close()
-    if not price_map:
-        raise ValueError(f"No valid ASIN price entries found in: {path}")
+    if not price_catalog:
+        raise ValueError(f"No valid ASIN price entries were extracted from: {price_catalog_path}")
 
-    return price_map
+    return price_catalog
 
 
 def export_country_summary(
-    route_stats: Dict[Tuple[str, str], Dict[str, Any]],
-    output_csv_path: Path | str,
+    route_statistics: Mapping[RouteKey, RouteMetric],
+    output_csv_path: Path,
 ) -> None:
-    """Export Departure Country x Arrival Country route metrics to a CSV file."""
-    output_path = Path(output_csv_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    """Export Departure Country x Arrival Country route metrics to a clean CSV summary file."""
+    output_csv_path.parent.mkdir(parents=True, exist_ok=True)
 
-    header = [
+    header: Sequence[str] = [
         "DEPARTURE_COUNTRY",
         "ARRIVAL_COUNTRY",
         "TRANSFER_COUNT",
@@ -115,312 +213,302 @@ def export_country_summary(
         "TOTAL_AMOUNT_EUR",
     ]
 
-    sorted_routes = sorted(route_stats.keys(), key=lambda r: (r[0], r[1]))
+    total_accumulator = RouteMetric()
+    output_rows: MutableSequence[Sequence[str]] = [header]
 
-    total_count = 0
-    total_qty = 0.0
-    total_amount = 0.0
+    for route_key in sorted(route_statistics.keys()):
+        metric = route_statistics[route_key]
+        total_accumulator.merge_metrics(metric)
 
-    rows: List[List[str]] = [header]
-    for dep, arr in sorted_routes:
-        data = route_stats[(dep, arr)]
-        c = data["count"]
-        q = data["qty"]
-        a = data["amount"]
+        quantity_string = (
+            f"{int(metric.total_quantity)}"
+            if metric.total_quantity.is_integer()
+            else f"{metric.total_quantity:.2f}"
+        )
+        output_rows.append([
+            route_key.departure_country,
+            route_key.arrival_country,
+            str(metric.transfer_count),
+            quantity_string,
+            f"{metric.total_amount_eur:.2f}",
+        ])
 
-        total_count += c
-        total_qty += q
-        total_amount += a
+    grand_quantity_string = (
+        f"{int(total_accumulator.total_quantity)}"
+        if total_accumulator.total_quantity.is_integer()
+        else f"{total_accumulator.total_quantity:.2f}"
+    )
+    output_rows.append([
+        "TOTAL",
+        "",
+        str(total_accumulator.transfer_count),
+        grand_quantity_string,
+        f"{total_accumulator.total_amount_eur:.2f}",
+    ])
 
-        qty_str = f"{int(q)}" if q.is_integer() else f"{q:.2f}"
-        rows.append([dep, arr, str(c), qty_str, f"{a:.2f}"])
-
-    # Append total summary row
-    grand_qty_str = f"{int(total_qty)}" if total_qty.is_integer() else f"{total_qty:.2f}"
-    rows.append(["TOTAL", "", str(total_count), grand_qty_str, f"{total_amount:.2f}"])
-
-    with open(output_path, mode="w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
-        writer.writerows(rows)
+    with open(output_csv_path, mode="w", encoding=DEFAULT_ENCODING, newline="") as file_handle:
+        writer = csv.writer(file_handle, quoting=csv.QUOTE_ALL, lineterminator=CSV_LINE_TERMINATOR)
+        writer.writerows(output_rows)
 
 
-def format_route_table(route_stats: Dict[Tuple[str, str], Dict[str, Any]]) -> str:
-    """Format route statistics into an aligned console table."""
-    if not route_stats:
+def format_route_table(route_statistics: Mapping[RouteKey, RouteMetric]) -> str:
+    """Format route metrics into an aligned, readable terminal table."""
+    if not route_statistics:
         return "  No FC_TRANSFER routes recorded.\n"
 
-    sorted_routes = sorted(route_stats.keys(), key=lambda r: (r[0], r[1]))
-
-    lines = [
+    table_lines: MutableSequence[str] = [
         f"  {'Route (Depart -> Arrive)':<26} | {'Transfers':<10} | {'Units Moved':<12} | {'Total Value (€)':<15}",
         "  " + "-" * 70,
     ]
 
-    total_count = 0
-    total_qty = 0.0
-    total_amount = 0.0
+    total_accumulator = RouteMetric()
+    for route_key in sorted(route_statistics.keys()):
+        metric = route_statistics[route_key]
+        total_accumulator.merge_metrics(metric)
 
-    for dep, arr in sorted_routes:
-        data = route_stats[(dep, arr)]
-        route_label = f"{dep} -> {arr}"
-        c = data["count"]
-        q = data["qty"]
-        a = data["amount"]
-
-        total_count += c
-        total_qty += q
-        total_amount += a
-
-        qty_str = f"{int(q):,d}" if q.is_integer() else f"{q:,.2f}"
-        lines.append(
-            f"  {route_label:<26} | {c:<10,d} | {qty_str:<12} | €{a:<14,.2f}"
+        quantity_string = (
+            f"{int(metric.total_quantity):,d}"
+            if metric.total_quantity.is_integer()
+            else f"{metric.total_quantity:,.2f}"
+        )
+        table_lines.append(
+            f"  {str(route_key):<26} | {metric.transfer_count:<10,d} | {quantity_string:<12} | €{metric.total_amount_eur:<14,.2f}"
         )
 
-    lines.append("  " + "-" * 70)
-    grand_qty_str = f"{int(total_qty):,d}" if total_qty.is_integer() else f"{total_qty:,.2f}"
-    lines.append(
-        f"  {'TOTAL':<26} | {total_count:<10,d} | {grand_qty_str:<12} | €{total_amount:<14,.2f}"
+    table_lines.append("  " + "-" * 70)
+    grand_quantity_string = (
+        f"{int(total_accumulator.total_quantity):,d}"
+        if total_accumulator.total_quantity.is_integer()
+        else f"{total_accumulator.total_quantity:,.2f}"
+    )
+    table_lines.append(
+        f"  {'TOTAL':<26} | {total_accumulator.transfer_count:<10,d} | {grand_quantity_string:<12} | €{total_accumulator.total_amount_eur:<14,.2f}"
     )
 
-    return "\n".join(lines)
+    return "\n".join(table_lines)
 
 
 def process_vat_report(
-    csv_path: Path | str,
-    price_catalog: Dict[str, float],
-    output_path: Path | str,
+    report_path: Path,
+    price_catalog: Mapping[str, float],
+    output_path: Path,
     export_summary: bool = True,
-) -> Dict[str, Any]:
+) -> FileProcessingResult:
     """
     Process a single Amazon VAT CSV report using a pre-loaded price catalog.
     
-    Populates Column T (unit price) and Column U (price * qty) for FC_TRANSFER rows.
-    Calculates country departure x arrival cross-border sums and exports summary CSV.
+    Populates Column T (unit price) and Column U (unit price * quantity) for FC_TRANSFER rows.
+    Leaves Columns W and AD empty for FC_TRANSFER rows.
     """
-    csv_path = Path(csv_path)
-    output_path = Path(output_path)
-
-    if not csv_path.exists():
-        raise FileNotFoundError(f"CSV report not found: {csv_path}")
+    if not report_path.exists():
+        raise FileNotFoundError(f"VAT report file not found at: {report_path}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(csv_path, mode="r", encoding="utf-8-sig", newline="") as infile:
+    with open(report_path, mode="r", encoding=DEFAULT_ENCODING, newline="") as infile:
         reader = csv.reader(infile)
         try:
             header = next(reader)
         except StopIteration:
-            raise ValueError(f"CSV file is empty: {csv_path}")
+            raise ValueError(f"VAT report file is empty: {report_path}")
 
-        col_indices = {col.strip(): i for i, col in enumerate(header)}
+        column_indices: Mapping[str, int] = {
+            column_name.strip(): index for index, column_name in enumerate(header)
+        }
 
-        def get_col_index(name: str, fallback: int) -> int:
-            return col_indices.get(name, fallback)
+        def resolve_column_index(column_header: ColumnHeader, fallback_index: int) -> int:
+            return column_indices.get(column_header.value, fallback_index)
 
-        idx_type = get_col_index("TRANSACTION_TYPE", 5)
-        idx_asin = get_col_index("ASIN", 13)
-        idx_qty = get_col_index("QTY", 16)
-        idx_cost_price = get_col_index("COST_PRICE_OF_ITEMS", 19)
-        idx_item_price_vat_excl = get_col_index("PRICE_OF_ITEMS_AMT_VAT_EXCL", 20)
-        idx_total_price_vat_excl = get_col_index("TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL", 22)
-        idx_total_activity_vat_excl = get_col_index("TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL", 29)
-        idx_dep_country = get_col_index("DEPARTURE_COUNTRY", 62)
-        idx_arr_country = get_col_index("ARRIVAL_COUNTRY", 65)
+        index_transaction_type = resolve_column_index(ColumnHeader.TRANSACTION_TYPE, 5)
+        index_asin = resolve_column_index(ColumnHeader.ASIN, 13)
+        index_quantity = resolve_column_index(ColumnHeader.QUANTITY, 16)
+        index_cost_price = resolve_column_index(ColumnHeader.COST_PRICE_OF_ITEMS, 19)
+        index_item_price_vat_excl = resolve_column_index(ColumnHeader.PRICE_OF_ITEMS_AMT_VAT_EXCL, 20)
+        index_total_price_vat_excl = resolve_column_index(ColumnHeader.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL, 22)
+        index_total_activity_vat_excl = resolve_column_index(ColumnHeader.TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL, 29)
+        index_departure_country = resolve_column_index(ColumnHeader.DEPARTURE_COUNTRY, 62)
+        index_arrival_country = resolve_column_index(ColumnHeader.ARRIVAL_COUNTRY, 65)
 
-        total_rows = 0
-        fc_transfer_count = 0
-        fc_transfer_updated = 0
+        total_rows: int = 0
+        fc_transfer_count: int = 0
+        fc_transfer_updated: int = 0
         missing_asins: Set[str] = set()
-        missing_rows_count = 0
-        total_value_added = 0.0
+        missing_rows_count: int = 0
+        total_value_added: float = 0.0
 
-        # Track route statistics: (dep, arr) -> {"count": int, "qty": float, "amount": float}
-        route_stats: Dict[Tuple[str, str], Dict[str, Any]] = defaultdict(
-            lambda: {"count": 0, "qty": 0.0, "amount": 0.0}
-        )
+        route_statistics: MutableMapping[RouteKey, RouteMetric] = defaultdict(RouteMetric)
+        output_rows: MutableSequence[MutableSequence[str]] = [header]
 
-        output_rows: List[List[str]] = [header]
-
-        for row in reader:
+        for row_cells in reader:
             total_rows += 1
-            if not row:
+            if not row_cells:
                 continue
 
-            if len(row) < len(header):
-                row.extend([""] * (len(header) - len(row)))
+            if len(row_cells) < len(header):
+                row_cells.extend([""] * (len(header) - len(row_cells)))
 
-            trans_type = row[idx_type].strip().upper() if len(row) > idx_type else ""
+            transaction_type = (
+                row_cells[index_transaction_type].strip().upper()
+                if len(row_cells) > index_transaction_type
+                else ""
+            )
 
-            if trans_type == "FC_TRANSFER":
+            if transaction_type == TransactionType.FC_TRANSFER:
                 fc_transfer_count += 1
-                asin = row[idx_asin].strip() if len(row) > idx_asin else ""
-                qty_str = row[idx_qty].strip() if len(row) > idx_qty else "1"
-                
-                dep_country = row[idx_dep_country].strip().upper() if len(row) > idx_dep_country else ""
-                arr_country = row[idx_arr_country].strip().upper() if len(row) > idx_arr_country else ""
-                if not dep_country:
-                    dep_country = "UNKNOWN"
-                if not arr_country:
-                    arr_country = "UNKNOWN"
+                asin = row_cells[index_asin].strip() if len(row_cells) > index_asin else ""
+                quantity_string = (
+                    row_cells[index_quantity].strip() if len(row_cells) > index_quantity else "1"
+                )
+
+                departure_country = (
+                    row_cells[index_departure_country].strip().upper()
+                    if len(row_cells) > index_departure_country
+                    else ""
+                ) or UNKNOWN_COUNTRY_CODE
+
+                arrival_country = (
+                    row_cells[index_arrival_country].strip().upper()
+                    if len(row_cells) > index_arrival_country
+                    else ""
+                ) or UNKNOWN_COUNTRY_CODE
+
+                route_key = RouteKey(departure_country, arrival_country)
 
                 try:
-                    qty = float(qty_str) if qty_str else 1.0
+                    quantity = float(quantity_string) if quantity_string else 1.0
                 except ValueError:
-                    qty = 1.0
+                    quantity = 1.0
 
                 if asin in price_catalog:
                     unit_price = price_catalog[asin]
-                    total_price = unit_price * qty
+                    total_price = unit_price * quantity
 
-                    row[idx_cost_price] = f"{unit_price:.2f}"
-                    row[idx_item_price_vat_excl] = f"{total_price:.2f}"
+                    row_cells[index_cost_price] = f"{unit_price:.2f}"
+                    row_cells[index_item_price_vat_excl] = f"{total_price:.2f}"
 
-                    if idx_total_price_vat_excl < len(row):
-                        row[idx_total_price_vat_excl] = ""
-                    if idx_total_activity_vat_excl < len(row):
-                        row[idx_total_activity_vat_excl] = ""
+                    if index_total_price_vat_excl < len(row_cells):
+                        row_cells[index_total_price_vat_excl] = ""
+                    if index_total_activity_vat_excl < len(row_cells):
+                        row_cells[index_total_activity_vat_excl] = ""
 
                     fc_transfer_updated += 1
                     total_value_added += total_price
-
-                    route_entry = route_stats[(dep_country, arr_country)]
-                    route_entry["count"] += 1
-                    route_entry["qty"] += qty
-                    route_entry["amount"] += total_price
+                    route_statistics[route_key].add_transfer(quantity=quantity, amount_eur=total_price)
                 else:
                     missing_asins.add(asin)
                     missing_rows_count += 1
-                    route_entry = route_stats[(dep_country, arr_country)]
-                    route_entry["count"] += 1
-                    route_entry["qty"] += qty
+                    route_statistics[route_key].add_transfer(quantity=quantity, amount_eur=0.0)
 
-            output_rows.append(row)
+            output_rows.append(row_cells)
 
-    with open(output_path, mode="w", encoding="utf-8-sig", newline="") as outfile:
-        writer = csv.writer(outfile, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+    with open(output_path, mode="w", encoding=DEFAULT_ENCODING, newline="") as outfile:
+        writer = csv.writer(outfile, quoting=csv.QUOTE_ALL, lineterminator=CSV_LINE_TERMINATOR)
         writer.writerows(output_rows)
 
-    # Export country route summary CSV
-    summary_path = output_path.parent / f"{output_path.stem.replace('_processed', '')}_country_summary.csv"
+    summary_path = (
+        output_path.parent / f"{output_path.stem.replace('_processed', '')}_country_summary.csv"
+    )
     if export_summary:
-        export_country_summary(route_stats, summary_path)
+        export_country_summary(route_statistics, summary_path)
 
-    return {
-        "csv_path": csv_path,
-        "output_path": output_path,
-        "summary_path": summary_path if export_summary else None,
-        "total_rows": total_rows,
-        "fc_transfer_count": fc_transfer_count,
-        "fc_transfer_updated": fc_transfer_updated,
-        "missing_asins": sorted(missing_asins),
-        "missing_rows_count": missing_rows_count,
-        "total_value_added": total_value_added,
-        "route_stats": dict(route_stats),
-    }
+    return FileProcessingResult(
+        report_path=report_path,
+        output_path=output_path,
+        summary_path=summary_path if export_summary else None,
+        total_rows=total_rows,
+        fc_transfer_count=fc_transfer_count,
+        fc_transfer_updated=fc_transfer_updated,
+        missing_asins=sorted(missing_asins),
+        missing_rows_count=missing_rows_count,
+        total_value_added=total_value_added,
+        route_statistics=dict(route_statistics),
+    )
 
 
 def process_batch(
-    input_dir: Path | str,
-    excel_path: Path | str,
-    output_dir: Path | str | None = None,
-) -> Dict[str, Any]:
+    input_directory: Path,
+    price_catalog_path: Path,
+    output_directory: Path | None = None,
+) -> BatchProcessingResult:
     """
-    Process all CSV reports in a folder in batch mode.
+    Process all VAT reports in a folder in batch mode.
     
-    Saves outputs into input_dir/processed/<filename> (or output_dir if provided).
-    Generates per-file country summaries and a consolidated batch_country_summary.csv.
+    Generates individual filled reports, route summaries, and a consolidated batch summary.
     """
-    input_dir = Path(input_dir)
-    excel_path = Path(excel_path)
+    if not input_directory.is_dir():
+        raise NotADirectoryError(f"Input path is not a directory: {input_directory}")
 
-    if not input_dir.is_dir():
-        raise NotADirectoryError(f"Input path is not a directory: {input_dir}")
+    target_output_directory = output_directory if output_directory else input_directory / "processed"
+    target_output_directory.mkdir(parents=True, exist_ok=True)
 
-    target_output_dir = Path(output_dir) if output_dir else input_dir / "processed"
-    target_output_dir.mkdir(parents=True, exist_ok=True)
-
-    csv_files = [
-        p for p in input_dir.glob("*.csv")
-        if p.is_file() and p.parent != target_output_dir and not p.name.startswith(".")
-        and not p.stem.endswith("_country_summary")
+    report_files: MutableSequence[Path] = [
+        file_path
+        for file_path in input_directory.glob("*.csv")
+        if file_path.is_file()
+        and file_path.parent != target_output_directory
+        and not file_path.name.startswith(".")
+        and not file_path.stem.endswith("_country_summary")
     ]
 
-    if not csv_files:
-        raise FileNotFoundError(f"No .csv files found in directory: {input_dir}")
+    if not report_files:
+        raise FileNotFoundError(f"No .csv files found in directory: {input_directory}")
 
-    csv_files.sort()
-    price_catalog = load_price_catalog(excel_path)
+    report_files.sort()
+    price_catalog = load_price_catalog(price_catalog_path)
 
-    file_results: List[Dict[str, Any]] = []
-    grand_total_rows = 0
-    grand_fc_transfers = 0
-    grand_fc_updated = 0
-    grand_value_added = 0.0
-    all_missing_asins: Set[str] = set()
-
-    batch_route_stats: Dict[Tuple[str, str], Dict[str, Any]] = defaultdict(
-        lambda: {"count": 0, "qty": 0.0, "amount": 0.0}
+    batch_summary_path = target_output_directory / "batch_country_summary.csv"
+    batch_result = BatchProcessingResult(
+        input_directory=input_directory,
+        output_directory=target_output_directory,
+        batch_summary_path=batch_summary_path,
+        price_catalog_path=price_catalog_path,
+        catalog_size=len(price_catalog),
+        files_count=len(report_files),
+        file_results=[],
     )
 
-    for csv_file in csv_files:
-        out_file = target_output_dir / csv_file.name
-        stats = process_vat_report(csv_file, price_catalog, out_file, export_summary=True)
-        file_results.append(stats)
+    mutable_file_results: MutableSequence[FileProcessingResult] = []
+    for report_file in report_files:
+        output_file = target_output_directory / report_file.name
+        file_result = process_vat_report(report_file, price_catalog, output_file, export_summary=True)
+        mutable_file_results.append(file_result)
 
-        grand_total_rows += stats["total_rows"]
-        grand_fc_transfers += stats["fc_transfer_count"]
-        grand_fc_updated += stats["fc_transfer_updated"]
-        grand_value_added += stats["total_value_added"]
-        all_missing_asins.update(stats["missing_asins"])
+        batch_result.grand_total_rows += file_result.total_rows
+        batch_result.grand_fc_transfers += file_result.fc_transfer_count
+        batch_result.grand_fc_updated += file_result.fc_transfer_updated
+        batch_result.grand_value_added += file_result.total_value_added
+        batch_result.all_missing_asins.update(file_result.missing_asins)
 
-        for route, data in stats["route_stats"].items():
-            b_route = batch_route_stats[route]
-            b_route["count"] += data["count"]
-            b_route["qty"] += data["qty"]
-            b_route["amount"] += data["amount"]
+        for route_key, metric in file_result.route_statistics.items():
+            batch_result.consolidated_routes[route_key].merge_metrics(metric)
 
-    # Export consolidated batch country summary
-    batch_summary_path = target_output_dir / "batch_country_summary.csv"
-    export_country_summary(batch_route_stats, batch_summary_path)
-
-    return {
-        "mode": "batch",
-        "input_dir": input_dir,
-        "output_dir": target_output_dir,
-        "batch_summary_path": batch_summary_path,
-        "excel_path": excel_path,
-        "catalog_size": len(price_catalog),
-        "files_count": len(csv_files),
-        "file_results": file_results,
-        "grand_total_rows": grand_total_rows,
-        "grand_fc_transfers": grand_fc_transfers,
-        "grand_fc_updated": grand_fc_updated,
-        "grand_value_added": grand_value_added,
-        "all_missing_asins": sorted(all_missing_asins),
-        "batch_route_stats": dict(batch_route_stats),
-    }
+    batch_result.file_results = mutable_file_results
+    export_country_summary(batch_result.consolidated_routes, batch_summary_path)
+    return batch_result
 
 
-def print_single_summary(stats: Dict[str, Any], catalog_size: int, excel_path: Path) -> None:
+def print_single_summary(result: FileProcessingResult, catalog_size: int, price_catalog_path: Path) -> None:
     """Display single-file execution summary and country route breakdown."""
     print("\n" + "=" * 74)
     print("  AMAZON VAT REPORT PROCESSING COMPLETE")
     print("=" * 74)
-    print(f"  Input CSV:          {stats['csv_path']}")
-    print(f"  Price Catalog:      {excel_path} ({catalog_size} ASINs loaded)")
-    print(f"  Output CSV:         {stats['output_path']}")
-    if stats.get("summary_path"):
-        print(f"  Country Summary:    {stats['summary_path']}")
+    print(f"  Input Report:       {result.report_path}")
+    print(f"  Price Catalog:      {price_catalog_path} ({catalog_size} ASINs loaded)")
+    print(f"  Output Report:      {result.output_path}")
+    if result.summary_path:
+        print(f"  Country Summary:    {result.summary_path}")
     print("-" * 74)
-    print(f"  Total Rows:         {stats['total_rows']:,}")
-    print(f"  FC_TRANSFER Rows:   {stats['fc_transfer_count']:,}")
-    print(f"  Successfully Filled:{stats['fc_transfer_updated']:,}")
-    print(f"  Total Cost Filled:  €{stats['total_value_added']:,.2f}")
+    print(f"  Total Rows:         {result.total_rows:,}")
+    print(f"  FC_TRANSFER Rows:   {result.fc_transfer_count:,}")
+    print(f"  Successfully Filled:{result.fc_transfer_updated:,}")
+    print(f"  Total Cost Filled:  €{result.total_value_added:,.2f}")
 
-    if stats["missing_asins"]:
+    if result.missing_asins:
         print("-" * 74)
-        print(f"  [WARNING] {len(stats['missing_asins'])} ASIN(s) not found in price catalog ({stats['missing_rows_count']} rows):")
-        for asin in stats["missing_asins"]:
+        print(
+            f"  [WARNING] {len(result.missing_asins)} ASIN(s) not found in price catalog ({result.missing_rows_count} rows):"
+        )
+        for asin in result.missing_asins:
             print(f"    - {asin}")
         print("  (These rows were left with empty price columns)")
     else:
@@ -428,43 +516,43 @@ def print_single_summary(stats: Dict[str, Any], catalog_size: int, excel_path: P
 
     print("-" * 74)
     print("  DEPARTURE COUNTRY x ARRIVAL COUNTRY SUMMARY (FC_TRANSFER):")
-    print(format_route_table(stats["route_stats"]))
+    print(format_route_table(result.route_statistics))
     print("=" * 74 + "\n")
 
 
-def print_batch_summary(stats: Dict[str, Any]) -> None:
+def print_batch_summary(result: BatchProcessingResult) -> None:
     """Display batch execution summary with per-file table and consolidated routes."""
     print("\n" + "=" * 74)
     print("  BATCH PROCESSING COMPLETE")
     print("=" * 74)
-    print(f"  Input Directory:    {stats['input_dir']}")
-    print(f"  Output Directory:   {stats['output_dir']}")
-    print(f"  Consolidated CSV:   {stats['batch_summary_path']}")
-    print(f"  Price Catalog:      {stats['excel_path']} ({stats['catalog_size']} ASINs loaded)")
-    print(f"  Files Processed:    {stats['files_count']}")
+    print(f"  Input Directory:    {result.input_directory}")
+    print(f"  Output Directory:   {result.output_directory}")
+    print(f"  Consolidated CSV:   {result.batch_summary_path}")
+    print(f"  Price Catalog:      {result.price_catalog_path} ({result.catalog_size} ASINs loaded)")
+    print(f"  Files Processed:    {result.files_count}")
     print("-" * 74)
     print(f"  {'Filename':<30} | {'Rows':<7} | {'FC Rows':<8} | {'Filled Value':<14}")
     print("-" * 74)
 
-    for item in stats["file_results"]:
-        fname = item["csv_path"].name
-        if len(fname) > 28:
-            fname = fname[:25] + "..."
+    for item in result.file_results:
+        filename = item.report_path.name
+        if len(filename) > 28:
+            filename = filename[:25] + "..."
         print(
-            f"  {fname:<30} | {item['total_rows']:<7,d} | {item['fc_transfer_updated']:<8,d} | €{item['total_value_added']:<13,.2f}"
+            f"  {filename:<30} | {item.total_rows:<7,d} | {item.fc_transfer_updated:<8,d} | €{item.total_value_added:<13,.2f}"
         )
 
     print("-" * 74)
     print(f"  GRAND TOTALS:")
-    print(f"    Total Rows:       {stats['grand_total_rows']:,}")
-    print(f"    FC_TRANSFER Rows: {stats['grand_fc_transfers']:,}")
-    print(f"    Filled Rows:      {stats['grand_fc_updated']:,}")
-    print(f"    Total Cost Added: €{stats['grand_value_added']:,.2f}")
+    print(f"    Total Rows:       {result.grand_total_rows:,}")
+    print(f"    FC_TRANSFER Rows: {result.grand_fc_transfers:,}")
+    print(f"    Filled Rows:      {result.grand_fc_updated:,}")
+    print(f"    Total Cost Added: €{result.grand_value_added:,.2f}")
 
-    if stats["all_missing_asins"]:
+    if result.all_missing_asins:
         print("-" * 74)
-        print(f"  [WARNING] {len(stats['all_missing_asins'])} ASIN(s) not found in price catalog:")
-        for asin in stats["all_missing_asins"]:
+        print(f"  [WARNING] {len(result.all_missing_asins)} ASIN(s) not found in price catalog:")
+        for asin in sorted(result.all_missing_asins):
             print(f"    - {asin}")
         print("  (Unmatched rows were left with empty price columns)")
     else:
@@ -472,12 +560,12 @@ def print_batch_summary(stats: Dict[str, Any]) -> None:
 
     print("-" * 74)
     print("  CONSOLIDATED DEPARTURE x ARRIVAL SUMMARY (ALL FILES):")
-    print(format_route_table(stats["batch_route_stats"]))
+    print(format_route_table(result.consolidated_routes))
     print("=" * 74 + "\n")
 
 
 def prompt_for_path(prompt_text: str) -> Path:
-    """Prompt user interactively for a file or directory path."""
+    """Prompt user interactively for a file or directory path, sanitizing drag-and-drop input."""
     while True:
         try:
             user_input = input(f"{prompt_text}: ").strip()
@@ -489,11 +577,13 @@ def prompt_for_path(prompt_text: str) -> Path:
             print("  Please provide a valid path.")
             continue
 
-        path = clean_path_input(user_input)
-        if not path.exists():
-            print(f"  Error: Path not found at '{path}'. Please try again.")
+        sanitized_input = user_input.strip("'\"").replace(r"\ ", " ")
+        resolved_path = Path(sanitized_input).expanduser().resolve()
+
+        if not resolved_path.exists():
+            print(f"  Error: Path not found at '{resolved_path}'. Please try again.")
             continue
-        return path
+        return resolved_path
 
 
 def main() -> None:
@@ -501,61 +591,59 @@ def main() -> None:
         description="Fill missing prices for FC_TRANSFER rows and calculate Departure x Arrival country sums in Amazon VAT Reports."
     )
     parser.add_argument(
-        "-c", "--csv",
+        "--vat-report",
         dest="input_path",
-        type=str,
-        help="Path to a single Amazon VAT CSV report or a folder containing multiple CSVs",
+        type=Path,
+        help="Path to an Amazon VAT report CSV file or a folder containing reports",
     )
     parser.add_argument(
-        "-p", "--prices", "--excel",
-        dest="excel_path",
-        type=str,
+        "--price-catalog",
+        dest="price_catalog_path",
+        type=Path,
         help="Path to the Excel price catalog (.xlsx)",
     )
     parser.add_argument(
-        "-o", "--output",
+        "--output",
         dest="output_path",
-        type=str,
+        type=Path,
         default=None,
-        help="Optional custom output path (file for single mode, directory for batch mode)",
+        help="Custom destination output path (file for single mode, directory for batch mode)",
     )
 
     args = parser.parse_args()
 
-    input_path = clean_path_input(args.input_path) if args.input_path else None
-    excel_path = clean_path_input(args.excel_path) if args.excel_path else None
-    output_path = clean_path_input(args.output_path) if args.output_path else None
+    input_path = args.input_path.expanduser().resolve() if args.input_path else None
+    price_catalog_path = args.price_catalog_path.expanduser().resolve() if args.price_catalog_path else None
+    output_path = args.output_path.expanduser().resolve() if args.output_path else None
 
     # Interactive prompts if paths are missing
-    if not input_path or not excel_path:
+    if not input_path or not price_catalog_path:
         print("\n" + "=" * 74)
         print("   Amazon VAT Report - FC_Transfer Price Automation & Country Summary")
         print("=" * 74)
         print(" Tip: You can drag and drop a file or folder into this window.\n")
 
         if not input_path:
-            input_path = prompt_for_path("1. Enter or Drag & Drop the CSV file or folder containing CSVs")
-        if not excel_path:
-            excel_path = prompt_for_path("2. Enter or Drag & Drop the Excel price catalog (.xlsx)")
+            input_path = prompt_for_path("1. Enter or Drag & Drop the VAT report CSV file or folder with reports")
+        if not price_catalog_path:
+            price_catalog_path = prompt_for_path("2. Enter or Drag & Drop the Excel price catalog (.xlsx)")
 
     try:
         if input_path.is_dir():
-            # Batch mode
-            batch_stats = process_batch(
-                input_dir=input_path,
-                excel_path=excel_path,
-                output_dir=output_path,
+            batch_result = process_batch(
+                input_directory=input_path,
+                price_catalog_path=price_catalog_path,
+                output_directory=output_path,
             )
-            print_batch_summary(batch_stats)
+            print_batch_summary(batch_result)
         else:
-            # Single file mode
-            price_catalog = load_price_catalog(excel_path)
-            default_out = input_path.parent / f"{input_path.stem}_processed{input_path.suffix}"
-            target_out = output_path if output_path else default_out
-            stats = process_vat_report(input_path, price_catalog, target_out, export_summary=True)
-            print_single_summary(stats, len(price_catalog), excel_path)
-    except Exception as e:
-        print(f"\n[ERROR] {e}", file=sys.stderr)
+            price_catalog = load_price_catalog(price_catalog_path)
+            default_output_path = input_path.parent / f"{input_path.stem}_processed{input_path.suffix}"
+            target_output_path = output_path if output_path else default_output_path
+            file_result = process_vat_report(input_path, price_catalog, target_output_path, export_summary=True)
+            print_single_summary(file_result, len(price_catalog), price_catalog_path)
+    except Exception as error:
+        print(f"\n[ERROR] {error}", file=sys.stderr)
         sys.exit(1)
 
 

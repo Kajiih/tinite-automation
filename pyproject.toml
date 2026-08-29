@@ -3,11 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "alex-automation"
+name = "amazon-vat-report-automation"
 version = "0.1.0"
 description = "Amazon VAT Transaction Report FC_Transfer price automation and cross-border country summaries"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "openpyxl>=3.1.0",
 ]
