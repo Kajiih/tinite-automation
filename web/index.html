@@ -375,7 +375,7 @@ def run_batch(input_dir_name, catalog_filename):
         pyodideInstance.runPython(pythonBridgeScript);
 
         engineStatus.className = "flex items-center space-x-2 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-full font-medium";
-        engineStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span>WebAssembly Ready</span>';
+        engineStatus.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span>v0.1.0 • WebAssembly Ready</span>';
       } catch (err) {
         console.error("Pyodide initialization error:", err);
         const isLocalFile = window.location.protocol === "file:";

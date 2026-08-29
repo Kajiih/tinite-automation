@@ -16,6 +16,7 @@ import csv
 import http.server
 import logging
 import os
+import socket
 import socketserver
 import sys
 import threading
@@ -657,13 +658,21 @@ class WebAppHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    """Check if a port is already actively listening and accepting connections."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.1)
+        return sock.connect_ex((host, port)) == 0
+
+
 def serve_web(starting_port: int = 8000, max_attempts: int = 25) -> None:
     """Start local web server on an available port and open in default browser."""
-    socketserver.TCPServer.allow_reuse_address = True
     server = None
     active_port = starting_port
 
     for port in range(starting_port, starting_port + max_attempts):
+        if is_port_in_use(port):
+            continue
         try:
             server = socketserver.TCPServer(("", port), WebAppHTTPRequestHandler)
             active_port = port
