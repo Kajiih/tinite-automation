@@ -12,9 +12,17 @@ dependencies = [
     "openpyxl>=3.1.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
 [project.scripts]
 process-report = "process_report:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 only-include = ["process_report.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
