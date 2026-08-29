@@ -7,51 +7,51 @@
 """
 Amazon VAT Transaction Report - FC_Transfer Price Automation
 
-This script fills unit price (Column T: COST_PRICE_OF_ITEMS) and total line price
-(Column U: PRICE_OF_ITEMS_AMT_VAT_EXCL) for FC_TRANSFER rows by matching ASINs
-against a provided Excel price catalog.
+Production-grade automation to populate unit cost (Column T: COST_PRICE_OF_ITEMS)
+and line total (Column U: PRICE_OF_ITEMS_AMT_VAT_EXCL) for FC_TRANSFER rows in
+Amazon VAT reports based on an Excel price catalog.
+
+Supports both single CSV file processing and batch folder processing.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
-import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 
 def clean_path_input(raw_input: str) -> Path:
-    """Clean path strings obtained from user input / drag-and-drop."""
+    """Sanitize path strings from CLI arguments or terminal drag-and-drop."""
     cleaned = raw_input.strip().strip("'\"").strip()
     return Path(cleaned).expanduser().resolve()
 
 
 def load_price_catalog(excel_path: Path | str) -> Dict[str, float]:
     """
-    Load ASIN -> unit price mapping from the Excel catalog.
+    Load ASIN -> unit price mapping from the Excel catalog (.xlsx).
     
-    Finds the ASIN column and the unit price column either by header name
-    or defaults to columns 1 and 2.
+    Dynamically identifies ASIN and Price columns by header name,
+    falling back to columns 0 and 1 if standard headers are not found.
     """
     import openpyxl
 
     path = Path(excel_path)
     if not path.exists():
-        raise FileNotFoundError(f"Excel price catalog not found at: {path}")
+        raise FileNotFoundError(f"Excel price catalog not found: {path}")
 
     workbook = openpyxl.load_workbook(filename=path, data_only=True, read_only=True)
     sheet = workbook.active
     if sheet is None:
-        raise ValueError(f"No active sheet found in {path}")
+        raise ValueError(f"No active worksheet found in: {path}")
 
     rows_iter = sheet.iter_rows(values_only=True)
     header_row = next(rows_iter, None)
     if not header_row:
-        raise ValueError(f"The Excel file {path} is empty.")
+        raise ValueError(f"Excel file is empty: {path}")
 
-    # Find ASIN and Price column indexes
     asin_col_idx = 0
     price_col_idx = 1
 
@@ -61,14 +61,14 @@ def load_price_catalog(excel_path: Path | str) -> Dict[str, float]:
         cell_str = str(cell).strip().lower()
         if "asin" in cell_str:
             asin_col_idx = idx
-        elif any(k in cell_str for k in ["price cost", "prix d'achat", "cogs", "cost", "price", "prix"]):
-            # Prefer price cost / cogs
+        elif any(kw in cell_str for kw in ["price cost", "prix d'achat", "cogs", "cost", "price", "prix"]):
             price_col_idx = idx
 
     price_map: Dict[str, float] = {}
     for row in rows_iter:
         if not row or len(row) <= asin_col_idx:
             continue
+
         raw_asin = row[asin_col_idx]
         if raw_asin is None:
             continue
@@ -91,33 +91,31 @@ def load_price_catalog(excel_path: Path | str) -> Dict[str, float]:
             continue
 
     workbook.close()
+    if not price_map:
+        raise ValueError(f"No valid ASIN price entries found in: {path}")
+
     return price_map
 
 
 def process_vat_report(
     csv_path: Path | str,
-    excel_path: Path | str,
-    output_path: Path | str | None = None,
-) -> dict:
+    price_catalog: Dict[str, float],
+    output_path: Path | str,
+) -> Dict[str, Any]:
     """
-    Process the Amazon VAT CSV report and fill FC_TRANSFER prices.
+    Process a single Amazon VAT CSV report using a pre-loaded price catalog.
     
-    Returns a dictionary with processing statistics.
+    Populates Column T (unit price) and Column U (price * qty) for FC_TRANSFER rows.
+    Leaves Columns W and AD empty for FC_TRANSFER rows.
     """
     csv_path = Path(csv_path)
-    excel_path = Path(excel_path)
+    output_path = Path(output_path)
 
     if not csv_path.exists():
-        raise FileNotFoundError(f"CSV report not found at: {csv_path}")
+        raise FileNotFoundError(f"CSV report not found: {csv_path}")
 
-    if output_path is None:
-        output_path = csv_path.parent / f"{csv_path.stem}_processed{csv_path.suffix}"
-    else:
-        output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    price_catalog = load_price_catalog(excel_path)
-
-    # Read CSV
     with open(csv_path, mode="r", encoding="utf-8-sig", newline="") as infile:
         reader = csv.reader(infile)
         try:
@@ -125,10 +123,8 @@ def process_vat_report(
         except StopIteration:
             raise ValueError(f"CSV file is empty: {csv_path}")
 
-        # Map column names to indexes
         col_indices = {col.strip(): i for i, col in enumerate(header)}
 
-        # Helper to find column index with fallback
         def get_col_index(name: str, fallback: int) -> int:
             return col_indices.get(name, fallback)
 
@@ -154,7 +150,6 @@ def process_vat_report(
             if not row:
                 continue
 
-            # Ensure row length matches header
             if len(row) < len(header):
                 row.extend([""] * (len(header) - len(row)))
 
@@ -163,9 +158,8 @@ def process_vat_report(
             if trans_type == "FC_TRANSFER":
                 fc_transfer_count += 1
                 asin = row[idx_asin].strip() if len(row) > idx_asin else ""
-                
-                # Parse quantity
                 qty_str = row[idx_qty].strip() if len(row) > idx_qty else "1"
+                
                 try:
                     qty = float(qty_str) if qty_str else 1.0
                 except ValueError:
@@ -175,11 +169,9 @@ def process_vat_report(
                     unit_price = price_catalog[asin]
                     total_price = unit_price * qty
 
-                    # Format numbers with 2 decimal places
                     row[idx_cost_price] = f"{unit_price:.2f}"
                     row[idx_item_price_vat_excl] = f"{total_price:.2f}"
-                    
-                    # Columns W and AD should be empty for FC_TRANSFER
+
                     if idx_total_price_vat_excl < len(row):
                         row[idx_total_price_vat_excl] = ""
                     if idx_total_activity_vat_excl < len(row):
@@ -193,16 +185,13 @@ def process_vat_report(
 
             output_rows.append(row)
 
-    # Write output CSV with utf-8-sig, CRLF, and quote all fields
     with open(output_path, mode="w", encoding="utf-8-sig", newline="") as outfile:
         writer = csv.writer(outfile, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
         writer.writerows(output_rows)
 
     return {
         "csv_path": csv_path,
-        "excel_path": excel_path,
         "output_path": output_path,
-        "catalog_size": len(price_catalog),
         "total_rows": total_rows,
         "fc_transfer_count": fc_transfer_count,
         "fc_transfer_updated": fc_transfer_updated,
@@ -212,34 +201,140 @@ def process_vat_report(
     }
 
 
-def print_summary(stats: dict) -> None:
-    """Print a clean execution summary to the console."""
-    print("\n" + "=" * 60)
+def process_batch(
+    input_dir: Path | str,
+    excel_path: Path | str,
+    output_dir: Path | str | None = None,
+) -> Dict[str, Any]:
+    """
+    Process all CSV reports in a folder in batch mode.
+    
+    Saves outputs into input_dir/processed/<filename> (or output_dir if provided).
+    Loads the Excel price catalog once to maximize efficiency.
+    """
+    input_dir = Path(input_dir)
+    excel_path = Path(excel_path)
+
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"Input path is not a directory: {input_dir}")
+
+    target_output_dir = Path(output_dir) if output_dir else input_dir / "processed"
+    target_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect all CSVs in input_dir, excluding the output directory itself
+    csv_files = [
+        p for p in input_dir.glob("*.csv")
+        if p.is_file() and p.parent != target_output_dir and not p.name.startswith(".")
+    ]
+
+    if not csv_files:
+        raise FileNotFoundError(f"No .csv files found in directory: {input_dir}")
+
+    csv_files.sort()
+    price_catalog = load_price_catalog(excel_path)
+
+    file_results: List[Dict[str, Any]] = []
+    grand_total_rows = 0
+    grand_fc_transfers = 0
+    grand_fc_updated = 0
+    grand_value_added = 0.0
+    all_missing_asins: Set[str] = set()
+
+    for csv_file in csv_files:
+        out_file = target_output_dir / csv_file.name
+        stats = process_vat_report(csv_file, price_catalog, out_file)
+        file_results.append(stats)
+
+        grand_total_rows += stats["total_rows"]
+        grand_fc_transfers += stats["fc_transfer_count"]
+        grand_fc_updated += stats["fc_transfer_updated"]
+        grand_value_added += stats["total_value_added"]
+        all_missing_asins.update(stats["missing_asins"])
+
+    return {
+        "mode": "batch",
+        "input_dir": input_dir,
+        "output_dir": target_output_dir,
+        "excel_path": excel_path,
+        "catalog_size": len(price_catalog),
+        "files_count": len(csv_files),
+        "file_results": file_results,
+        "grand_total_rows": grand_total_rows,
+        "grand_fc_transfers": grand_fc_transfers,
+        "grand_fc_updated": grand_fc_updated,
+        "grand_value_added": grand_value_added,
+        "all_missing_asins": sorted(all_missing_asins),
+    }
+
+
+def print_single_summary(stats: Dict[str, Any], catalog_size: int, excel_path: Path) -> None:
+    """Display single-file execution summary."""
+    print("\n" + "=" * 65)
     print("  AMAZON VAT REPORT PROCESSING COMPLETE")
-    print("=" * 60)
+    print("=" * 65)
     print(f"  Input CSV:          {stats['csv_path']}")
-    print(f"  Price Catalog:      {stats['excel_path']} ({stats['catalog_size']} ASINs loaded)")
+    print(f"  Price Catalog:      {excel_path} ({catalog_size} ASINs loaded)")
     print(f"  Output CSV:         {stats['output_path']}")
-    print("-" * 60)
+    print("-" * 65)
     print(f"  Total Rows:         {stats['total_rows']:,}")
     print(f"  FC_TRANSFER Rows:   {stats['fc_transfer_count']:,}")
     print(f"  Successfully Filled:{stats['fc_transfer_updated']:,}")
     print(f"  Total Cost Filled:  €{stats['total_value_added']:,.2f}")
 
     if stats["missing_asins"]:
-        print("-" * 60)
-        print(f"  [WARNING] {len(stats['missing_asins'])} ASIN(s) were not found in the price catalog ({stats['missing_rows_count']} rows):")
+        print("-" * 65)
+        print(f"  [WARNING] {len(stats['missing_asins'])} ASIN(s) not found in price catalog ({stats['missing_rows_count']} rows):")
         for asin in stats["missing_asins"]:
             print(f"    - {asin}")
         print("  (These rows were left with empty price columns)")
     else:
         print(f"  Missing ASINs:      0 (100% matched)")
 
-    print("=" * 60 + "\n")
+    print("=" * 65 + "\n")
 
 
-def prompt_for_path(prompt_text: str, default_pattern: str | None = None) -> Path:
-    """Prompt the user interactively for a file path with drag & drop support."""
+def print_batch_summary(stats: Dict[str, Any]) -> None:
+    """Display batch execution summary with per-file details."""
+    print("\n" + "=" * 70)
+    print("  BATCH PROCESSING COMPLETE")
+    print("=" * 70)
+    print(f"  Input Directory:    {stats['input_dir']}")
+    print(f"  Output Directory:   {stats['output_dir']}")
+    print(f"  Price Catalog:      {stats['excel_path']} ({stats['catalog_size']} ASINs loaded)")
+    print(f"  Files Processed:    {stats['files_count']}")
+    print("-" * 70)
+    print(f"  {'Filename':<30} | {'Rows':<7} | {'FC Rows':<8} | {'Filled Value':<12}")
+    print("-" * 70)
+
+    for item in stats["file_results"]:
+        fname = item["csv_path"].name
+        if len(fname) > 28:
+            fname = fname[:25] + "..."
+        print(
+            f"  {fname:<30} | {item['total_rows']:<7,d} | {item['fc_transfer_updated']:<8,d} | €{item['total_value_added']:<11,.2f}"
+        )
+
+    print("-" * 70)
+    print(f"  GRAND TOTALS:")
+    print(f"    Total Rows:       {stats['grand_total_rows']:,}")
+    print(f"    FC_TRANSFER Rows: {stats['grand_fc_transfers']:,}")
+    print(f"    Filled Rows:      {stats['grand_fc_updated']:,}")
+    print(f"    Total Cost Added: €{stats['grand_value_added']:,.2f}")
+
+    if stats["all_missing_asins"]:
+        print("-" * 70)
+        print(f"  [WARNING] {len(stats['all_missing_asins'])} ASIN(s) not found in price catalog:")
+        for asin in stats["all_missing_asins"]:
+            print(f"    - {asin}")
+        print("  (Unmatched rows were left with empty price columns)")
+    else:
+        print(f"    Missing ASINs:    0 (100% matched)")
+
+    print("=" * 70 + "\n")
+
+
+def prompt_for_path(prompt_text: str) -> Path:
+    """Prompt user interactively for a file or directory path."""
     while True:
         try:
             user_input = input(f"{prompt_text}: ").strip()
@@ -248,67 +343,76 @@ def prompt_for_path(prompt_text: str, default_pattern: str | None = None) -> Pat
             sys.exit(0)
 
         if not user_input:
-            print("  Please provide a file path.")
+            print("  Please provide a valid path.")
             continue
 
         path = clean_path_input(user_input)
         if not path.exists():
-            print(f"  Error: File not found at '{path}'. Please try again.")
+            print(f"  Error: Path not found at '{path}'. Please try again.")
             continue
         return path
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Fill missing prices for FC_TRANSFER rows in Amazon VAT Transaction Reports."
+        description="Fill missing prices for FC_TRANSFER rows in Amazon VAT Transaction Reports (Single file or Batch folder)."
     )
     parser.add_argument(
         "-c", "--csv",
-        dest="csv_path",
+        dest="input_path",
         type=str,
-        help="Path to the Amazon VAT CSV report (e.g. 01-24.csv)",
+        help="Path to a single Amazon VAT CSV report or a folder containing multiple CSVs",
     )
     parser.add_argument(
         "-p", "--prices", "--excel",
         dest="excel_path",
         type=str,
-        help="Path to the Excel price catalog (e.g. amazon_asin_prix_achat_cogs_maj.xlsx)",
+        help="Path to the Excel price catalog (.xlsx)",
     )
     parser.add_argument(
         "-o", "--output",
         dest="output_path",
         type=str,
         default=None,
-        help="Optional path for the output CSV (defaults to <name>_processed.csv)",
+        help="Optional custom output path (file for single mode, directory for batch mode)",
     )
 
     args = parser.parse_args()
 
-    csv_path = clean_path_input(args.csv_path) if args.csv_path else None
+    input_path = clean_path_input(args.input_path) if args.input_path else None
     excel_path = clean_path_input(args.excel_path) if args.excel_path else None
     output_path = clean_path_input(args.output_path) if args.output_path else None
 
-    # Interactive mode if arguments are missing
-    if not csv_path or not excel_path:
-        print("\n" + "=" * 60)
+    # Interactive prompts if paths are missing
+    if not input_path or not excel_path:
+        print("\n" + "=" * 65)
         print("   Amazon VAT Report - FC_Transfer Price Automation")
-        print("=" * 60)
-        print(" Tip: You can drag and drop files directly into this terminal window.\n")
+        print("=" * 65)
+        print(" Tip: You can drag and drop a file or folder into this window.\n")
 
-        if not csv_path:
-            csv_path = prompt_for_path("1. Enter or Drag & Drop the Amazon VAT CSV report")
+        if not input_path:
+            input_path = prompt_for_path("1. Enter or Drag & Drop the CSV file or folder containing CSVs")
         if not excel_path:
             excel_path = prompt_for_path("2. Enter or Drag & Drop the Excel price catalog (.xlsx)")
 
     try:
-        stats = process_vat_report(
-            csv_path=csv_path,
-            excel_path=excel_path,
-            output_path=output_path,
-        )
-        print_summary(stats)
+        if input_path.is_dir():
+            # Batch mode
+            batch_stats = process_batch(
+                input_dir=input_path,
+                excel_path=excel_path,
+                output_dir=output_path,
+            )
+            print_batch_summary(batch_stats)
+        else:
+            # Single file mode
+            price_catalog = load_price_catalog(excel_path)
+            default_out = input_path.parent / f"{input_path.stem}_processed{input_path.suffix}"
+            target_out = output_path if output_path else default_out
+            stats = process_vat_report(input_path, price_catalog, target_out)
+            print_single_summary(stats, len(price_catalog), excel_path)
     except Exception as e:
-        print(f"\n[ERROR] Failed to process report: {e}", file=sys.stderr)
+        print(f"\n[ERROR] {e}", file=sys.stderr)
         sys.exit(1)
 
 

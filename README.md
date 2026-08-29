@@ -1,6 +1,8 @@
 # Amazon VAT Report - FC_Transfer Price Automation
 
-A lightweight, user-friendly tool to automatically populate missing prices for `FC_TRANSFER` rows in Amazon VAT Transaction Reports (AVTR CSV files) based on an Excel price catalog.
+A lightweight, robust, production-grade tool to automatically populate missing prices for `FC_TRANSFER` rows in Amazon VAT Transaction Reports (AVTR CSV files) using an Excel price catalog.
+
+Supports both **single CSV file** and **batch folder** processing.
 
 ---
 
@@ -8,10 +10,10 @@ A lightweight, user-friendly tool to automatically populate missing prices for `
 
 1. Matches items by **ASIN** (Column N) against the Excel catalog.
 2. Fills **Column T (`COST_PRICE_OF_ITEMS`)** with the unit cost price from Excel.
-3. Fills **Column U (`PRICE_OF_ITEMS_AMT_VAT_EXCL`)** with the total price for the line (`Unit Cost × QTY`).
+3. Fills **Column U (`PRICE_OF_ITEMS_AMT_VAT_EXCL`)** with the total line price (`Unit Cost × QTY`).
 4. Ensures **Column W (`TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL`)** and **Column AD (`TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL`)** remain empty for `FC_TRANSFER` rows.
-5. Leaves all other transactions (`SALE`, `REFUND`, `RETURN`) and columns untouched.
-6. Preserves UTF-8 BOM encoding (`utf-8-sig`) and exact CSV formatting.
+5. Preserves all other transaction types (`SALE`, `REFUND`, `RETURN`) and columns untouched.
+6. Preserves UTF-8 BOM encoding (`utf-8-sig`) and RFC-compliant CSV formatting.
 
 ---
 
@@ -19,37 +21,41 @@ A lightweight, user-friendly tool to automatically populate missing prices for `
 
 ### Method 1: Double-Click Launcher (Easiest for non-technical users)
 
-- **macOS**: Double-click `run.command`.
-- **Windows**: Double-click `run.bat`.
+- **macOS**: Double-click [`run.command`](file:///Users/paquerot/Documents/dev_projects/tinite_script/alex_automation/run.command).
+- **Windows**: Double-click [`run.bat`](file:///Users/paquerot/Documents/dev_projects/tinite_script/alex_automation/run.bat).
 
-When prompted, simply **drag and drop** your CSV file and Excel price file into the terminal window and press **Enter**.
+When prompted:
+1. Drag and drop your **CSV file** OR **folder containing CSVs** into the terminal window and press **Enter**.
+2. Drag and drop your **Excel price catalog (`.xlsx`)** and press **Enter**.
 
 ---
 
 ### Method 2: Command Line (CLI)
 
-Run directly with `uv` (recommended, auto-installs dependencies on the fly) or `python3`:
+Run directly with `uv` (recommended, installs dependencies on the fly) or `python3`:
 
+#### Single File Mode
 ```bash
-# Basic usage (output defaults to <input>_processed.csv)
+# Saves output to example_data/01-24_processed.csv
 uv run process_report.py --csv "example_data/01-24.csv" --prices "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
+```
 
-# Custom output destination
-uv run process_report.py --csv "example_data/01-24.csv" --prices "example_data/amazon_asin_prix_achat_cogs_maj.xlsx" --output "output/01-24_filled.csv"
+#### Batch Folder Mode
+```bash
+# Processes all CSVs in the folder and saves outputs into example_data/processed/
+uv run process_report.py --csv "example_data/" --prices "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
 ```
 
 #### CLI Options
 | Option | Short | Description |
 | :--- | :--- | :--- |
-| `--csv` | `-c` | Path to the Amazon VAT CSV report |
+| `--csv` | `-c` | Path to a single CSV file or a directory of CSVs |
 | `--prices`, `--excel` | `-p` | Path to the Excel price catalog (`.xlsx`) |
-| `--output` | `-o` | *(Optional)* Custom output CSV path (default: `<csv_name>_processed.csv`) |
+| `--output` | `-o` | *(Optional)* Custom output path (file for single mode, directory for batch mode) |
 | `--help` | `-h` | Show help message and exit |
 
 ---
 
-## Missing ASIN Handling
-If any ASIN in `FC_TRANSFER` rows is not found in the Excel price list:
-- The script continues processing without failing.
-- The corresponding price cells remain empty.
-- A summary warning is displayed at the end of the run listing all missing ASINs.
+## Output Destinations
+- **Single File Mode**: Saved alongside the original file as `<filename>_processed.csv` (e.g. `01-24_processed.csv`).
+- **Batch Folder Mode**: Saved in a `processed/` subfolder within the input directory (e.g. `folder/processed/01-24.csv`, `folder/processed/02-24.csv`).
