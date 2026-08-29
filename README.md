@@ -1,6 +1,6 @@
 # Amazon VAT Report - FC_Transfer Price Automation
 
-A lightweight, robust, production-grade tool to automatically populate missing prices for `FC_TRANSFER` rows in Amazon VAT Transaction Reports (AVTR CSV files) using an Excel price catalog.
+A lightweight, robust, production-grade tool to automatically populate missing prices for `FC_TRANSFER` rows in Amazon VAT Transaction Reports (AVTR CSV files) using an Excel price catalog, and calculate **Departure Country × Arrival Country cross-border transfer summaries**.
 
 Supports both **single CSV file** and **batch folder** processing.
 
@@ -8,12 +8,13 @@ Supports both **single CSV file** and **batch folder** processing.
 
 ## What It Does
 
-1. Matches items by **ASIN** (Column N) against the Excel catalog.
-2. Fills **Column T (`COST_PRICE_OF_ITEMS`)** with the unit cost price from Excel.
-3. Fills **Column U (`PRICE_OF_ITEMS_AMT_VAT_EXCL`)** with the total line price (`Unit Cost × QTY`).
-4. Ensures **Column W (`TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL`)** and **Column AD (`TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL`)** remain empty for `FC_TRANSFER` rows.
-5. Preserves all other transaction types (`SALE`, `REFUND`, `RETURN`) and columns untouched.
-6. Preserves UTF-8 BOM encoding (`utf-8-sig`) and RFC-compliant CSV formatting.
+1. **ASIN Price Matching**: Matches items by `ASIN` (Column N) against the Excel catalog.
+2. **Unit Cost (Column T: `COST_PRICE_OF_ITEMS`)**: Populated with the unit cost price from Excel.
+3. **Line Total (Column U: `PRICE_OF_ITEMS_AMT_VAT_EXCL`)**: Populated with `Unit Cost × QTY`.
+4. **Clean Columns**: Ensures Columns W and AD remain empty for `FC_TRANSFER` rows.
+5. **Preserves Non-Transfer Data**: Leaves all `SALE`, `REFUND`, and `RETURN` rows 100% untouched.
+6. **Country Departure × Arrival Summary**: Calculates transfers count, total units moved, and total value in EUR for each cross-border route (e.g. `FR -> DE`, `DE -> CZ`), displaying an aligned table in the terminal and exporting dedicated summary CSVs.
+7. **Encoding & Standards**: Uses UTF-8 BOM (`utf-8-sig`) and RFC-compliant quoting.
 
 ---
 
@@ -32,19 +33,22 @@ When prompted:
 
 ### Method 2: Command Line (CLI)
 
-Run directly with `uv` (recommended, installs dependencies on the fly) or `python3`:
-
 #### Single File Mode
 ```bash
-# Saves output to example_data/01-24_processed.csv
 uv run process_report.py --csv "example_data/01-24.csv" --prices "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
 ```
+Outputs created:
+- `example_data/01-24_processed.csv` (Filled Amazon VAT report)
+- `example_data/01-24_country_summary.csv` (Departure × Arrival summary table)
 
 #### Batch Folder Mode
 ```bash
-# Processes all CSVs in the folder and saves outputs into example_data/processed/
 uv run process_report.py --csv "example_data/" --prices "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
 ```
+Outputs created:
+- `example_data/processed/<filename>.csv` (Filled report per file)
+- `example_data/processed/<filename>_country_summary.csv` (Route summary per file)
+- `example_data/processed/batch_country_summary.csv` (Consolidated route summary for all files)
 
 #### CLI Options
 | Option | Short | Description |
@@ -56,6 +60,11 @@ uv run process_report.py --csv "example_data/" --prices "example_data/amazon_asi
 
 ---
 
-## Output Destinations
-- **Single File Mode**: Saved alongside the original file as `<filename>_processed.csv` (e.g. `01-24_processed.csv`).
-- **Batch Folder Mode**: Saved in a `processed/` subfolder within the input directory (e.g. `folder/processed/01-24.csv`, `folder/processed/02-24.csv`).
+## Country Summary CSV Format
+| DEPARTURE_COUNTRY | ARRIVAL_COUNTRY | TRANSFER_COUNT | TOTAL_QTY | TOTAL_AMOUNT_EUR |
+| :--- | :--- | :--- | :--- | :--- |
+| CZ | DE | 5 | 87 | 258.85 |
+| CZ | IT | 3 | 12 | 34.80 |
+| DE | CZ | 41 | 370 | 1204.60 |
+| FR | DE | 84 | 473 | 1637.75 |
+| **TOTAL** | | **215** | **1723** | **7904.53** |
