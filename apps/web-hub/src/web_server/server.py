@@ -57,6 +57,19 @@ class WebHubRequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
         super().do_GET()
 
+    def do_POST(self) -> None:
+        if self.path in ("/api/update", "/update"):
+            from web_server.updater import perform_app_update
+            result = perform_app_update(PROJECT_ROOT)
+            payload = json.dumps({"success": result.success, "message": result.message}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        self.send_error(404, "Endpoint not found")
+
     def _serve_python_file(self, file_path: Path) -> None:
         if not file_path.exists():
             self.send_error(404, f"Module file not found: {file_path.name}")

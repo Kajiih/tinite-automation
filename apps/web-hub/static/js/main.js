@@ -49,6 +49,41 @@ document.getElementById("btn-dismiss-error")?.addEventListener("click", hideErro
 document.getElementById("tab-btn-vat")?.addEventListener("click", () => switchToolTab("vat"));
 document.getElementById("tab-btn-images")?.addEventListener("click", () => switchToolTab("images"));
 
+// In-Browser Update App Listener
+document.getElementById("btn-update-app")?.addEventListener("click", async () => {
+  const btn = document.getElementById("btn-update-app");
+  const btnText = document.getElementById("btn-update-text");
+  if (!btn || !btnText) return;
+
+  btn.disabled = true;
+  btn.classList.add("opacity-75");
+  btnText.textContent = "Updating...";
+
+  try {
+    const res = await fetch("/api/update", { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+    const data = await res.json();
+    if (data.success) {
+      btn.className = "flex items-center space-x-1.5 text-xs bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-full font-medium";
+      btnText.textContent = "Updated! Please refresh";
+      alert(data.message || "Application successfully updated! Please refresh the page.");
+    } else {
+      throw new Error(data.message || "Update failed");
+    }
+  } catch (err) {
+    btn.className = "flex items-center space-x-1.5 text-xs bg-red-100 text-red-800 border border-red-300 px-3 py-1.5 rounded-full font-medium";
+    btnText.textContent = "Update failed";
+    showError("Update Error", "Failed to update application", err.message);
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.classList.remove("opacity-75");
+    }, 3000);
+  }
+});
+
 // Bootstrap Application
 async function bootApp() {
   const engineStatus = document.getElementById("engine-status");
