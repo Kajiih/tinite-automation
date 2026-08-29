@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "web-hub"
+version = "0.2.0"
+description = "Amazon Automation Tools Web Hub Application"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "vat-report",
+    "image-renamer",
+]
+
+[project.scripts]
+amazon-tools = "web_server.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/web_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

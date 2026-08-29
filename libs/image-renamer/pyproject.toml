@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "image-renamer"
+version = "0.2.0"
+description = "Amazon ASIN Image Duplicator & Renamer Engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.scripts]
+duplicate-images = "image_renamer.engine:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/image_renamer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

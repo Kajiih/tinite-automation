@@ -6,22 +6,15 @@ and line total (Column U: PRICE_OF_ITEMS_AMT_VAT_EXCL) for FC_TRANSFER rows in
 Amazon VAT reports based on an Excel price catalog.
 
 Calculates and exports cross-border transfer sums by Departure Country x Arrival Country.
-Supports single CSV file processing, batch folder processing, interactive CLI, and local web app server.
+Supports single CSV file processing, batch folder processing, and CLI invocation.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
-import http.server
 import logging
-import os
-import socket
-import socketserver
 import sys
-import threading
-import time
-import webbrowser
 from collections import defaultdict
 from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence, Set
 from dataclasses import dataclass, field
@@ -29,10 +22,6 @@ from enum import StrEnum
 from pathlib import Path
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-PACKAGE_DIR: Path = Path(__file__).parent.resolve()
-PROJECT_ROOT: Path = PACKAGE_DIR.parent.parent.resolve()
-WEB_DIR: Path = PROJECT_ROOT / "web"
 
 
 class TransactionType(StrEnum):
@@ -631,98 +620,11 @@ def prompt_for_path(prompt_text: str) -> Path:
         return resolved_path
 
 
-class WebAppHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
-    """Custom request handler that serves web/ and provides process_report.py to Pyodide."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(WEB_DIR), **kwargs)
-
-    def do_GET(self) -> None:
-        if self.path in ("/process_report.py", "/process_report"):
-            # Serve current source file for Pyodide WebAssembly import
-            source_file = Path(__file__).resolve()
-            content = source_file.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(content)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(content)
-            return
-        super().do_GET()
-
-    def end_headers(self) -> None:
-        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-        super().end_headers()
-
-    def log_message(self, format: str, *args) -> None:
-        pass
-
-
-def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
-    """Check if a port is already actively listening and accepting connections."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.1)
-        return sock.connect_ex((host, port)) == 0
-
-
-def serve_web(starting_port: int = 8000, max_attempts: int = 25) -> None:
-    """Start local web server on an available port and open in default browser."""
-    server = None
-    active_port = starting_port
-
-    for port in range(starting_port, starting_port + max_attempts):
-        if is_port_in_use(port):
-            continue
-        try:
-            server = socketserver.TCPServer(("", port), WebAppHTTPRequestHandler)
-            active_port = port
-            break
-        except OSError:
-            continue
-
-    if server is None:
-        logger.error("Could not bind to any open port between %d and %d", starting_port, starting_port + max_attempts)
-        sys.exit(1)
-
-    url = f"http://localhost:{active_port}"
-    print("\n" + "=" * 62)
-    print("  Amazon VAT Report - Web Application Server")
-    print("=" * 62)
-    print(f"  URL:     {url}")
-    print("  Status:  Opening in your default browser...")
-    print("  (Press Ctrl+C in this terminal window to stop the server)")
-    print("=" * 62 + "\n")
-
-    def _open_browser():
-        time.sleep(0.3)
-        webbrowser.open(url)
-
-    threading.Thread(target=_open_browser, daemon=True).start()
-
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nWeb server stopped cleanly.")
-    finally:
-        server.server_close()
-        sys.exit(0)
-
-
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="  [%(levelname)s] %(message)s")
 
     parser = argparse.ArgumentParser(
         description="Fill missing prices for FC_TRANSFER rows and calculate Departure x Arrival country sums in Amazon VAT Reports."
-    )
-    parser.add_argument(
-        "--web",
-        action="store_true",
-        help="Launch the local Web Application in your browser (default when no arguments are provided)",
-    )
-    parser.add_argument(
-        "--cli",
-        action="store_true",
-        help="Run interactive drag-and-drop prompt in terminal",
     )
     parser.add_argument(
         "--vat-report",
@@ -745,11 +647,6 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-
-    # Default action if no parameters or explicitly requested: Launch Web App
-    if args.web or (not args.cli and not args.input_path and not args.price_catalog_path and len(sys.argv) == 1):
-        serve_web()
-        return
 
     input_path = args.input_path.expanduser().resolve() if args.input_path else None
     price_catalog_path = args.price_catalog_path.expanduser().resolve() if args.price_catalog_path else None

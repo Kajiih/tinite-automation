@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Change directory to the repository root
+# Change directory to repository root
 cd "$(dirname "$0")"
 
 # Expand common user and Homebrew binary paths
@@ -22,5 +22,5 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
-# Execute Python application with production dependencies only (opens Web App by default or CLI with arguments)
-uv run --no-dev python -m amazon_vat_automation.process_report "$@"
+# Launch Amazon Automation Tools Web Hub from workspace
+uv run --no-dev --package web-hub python -m web_server.server "$@"

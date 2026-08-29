@@ -1,70 +1,88 @@
-# Amazon VAT Report - FC_Transfer Price Automation
+# Amazon Automation Tools Monorepo
 
-Production-grade automation to populate unit cost (Column T: `COST_PRICE_OF_ITEMS`) and line total (Column U: `PRICE_OF_ITEMS_AMT_VAT_EXCL`) for `FC_TRANSFER` rows in Amazon VAT Transaction Reports (AVTR) based on an Excel price catalog, and calculate Departure Country × Arrival Country cross-border summaries.
+A production-grade Python monorepo using **Astral `uv` Workspaces** with clean **`apps/` + `libs/`** domain separation.
+
+Includes full client-side WebAssembly execution in the browser (Pyodide) and high-performance CLI commands.
 
 ---
 
-## Quickstart
+## Workspace Architecture
 
-### 1. 1-Click Double-Click Launcher (Default: Web App)
+```
+amazon-automation-monorepo/
+├── pyproject.toml                  # Root workspace manifest
+├── uv.lock                         # Universal workspace lockfile
+├── README.md
+├── run.command                     # macOS 1-click launcher (starts Web Hub)
+├── run.bat                         # Windows 1-click launcher (starts Web Hub)
+│
+├── apps/
+│   └── web-hub/                    # User-Facing Web Hub Application
+│       ├── pyproject.toml          # App package (depends on workspace libs)
+│       ├── src/web_server/
+│       │   ├── __init__.py
+│       │   └── server.py           # Port fallback server & Pyodide engine streamer
+│       └── static/
+│           └── index.html          # WebAssembly Multi-Tool Web Hub
+│
+└── libs/
+    ├── vat-report/                 # Pure VAT Report Automation Engine
+    │   ├── pyproject.toml          # Independent package (openpyxl)
+    │   ├── src/vat_report/
+    │   │   ├── __init__.py
+    │   │   └── engine.py
+    │   ├── tests/
+    │   │   └── test_vat_report.py
+    │   └── example_data/
+    │       ├── sample_vat_report.csv
+    │       └── amazon_asin_prix_achat_cogs_maj.xlsx
+    │
+    └── image-renamer/              # Pure ASIN Image Duplicator & Renamer Engine
+        ├── pyproject.toml          # Independent package
+        ├── src/image_renamer/
+        │   ├── __init__.py
+        │   └── engine.py
+        ├── tests/
+        │   └── test_image_renamer.py
+        └── example_data/
+            └── sample_asins.txt
+```
+
+---
+
+## 1-Click Launchers (Browser Web Hub)
+
 - **macOS**: Double-click `run.command`
 - **Windows**: Double-click `run.bat`
 
-*Starts the local web server on an available port and automatically opens the application in your browser.*
+*Starts the local server on an available port (`http://localhost:8000`) and opens the Web Hub in your default browser.*
 
 ---
 
-### 2. Command Line (CLI)
+## Command-Line Usage (CLI)
 
-#### Interactive Terminal Mode:
 ```bash
-uv run process-report --cli
-# or via launcher:
-./run.command --cli
+# 1. Launch the Web Hub:
+uv run --package web-hub amazon-tools
+
+# 2. VAT Report Automation:
+uv run --package vat-report vat-report \
+  --vat-report "libs/vat-report/example_data/sample_vat_report.csv" \
+  --price-catalog "libs/vat-report/example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
+
+# 3. ASIN Image Duplicator:
+uv run --package image-renamer duplicate-images \
+  --images "path/to/templates" \
+  --asins "libs/image-renamer/example_data/sample_asins.txt" \
+  --output "output_images" \
+  --hardlinks
 ```
 
-#### Direct Invocation:
+---
+
+## Running Workspace Tests
+
 ```bash
-# Single file processing
-uv run process-report --vat-report "example_data/sample_vat_report.csv" --price-catalog "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
-
-# Batch folder processing
-uv run process-report --vat-report "example_data/" --price-catalog "example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
+uv run pytest -v
 ```
-
----
-
-## Project Structure
-
-```
-amazon-vat-report-automation/
-├── .gitignore
-├── pyproject.toml
-├── README.md
-├── run.command                     # macOS 1-click launcher
-├── run.bat                         # Windows 1-click launcher
-├── example_data/                   # Sample CSV reports and Excel catalog
-│   ├── sample_vat_report.csv
-│   └── amazon_asin_prix_achat_cogs_maj.xlsx
-├── src/
-│   └── amazon_vat_automation/
-│       ├── __init__.py
-│       └── process_report.py       # Core domain engine, CLI, & Web server
-├── web/
-│   └── index.html                  # WebAssembly browser application
-└── tests/
-    └── test_e2e.py                 # End-to-end test suite
-```
-
----
-
-## Output Files
-
-### Single File Mode
-- `<filename>_processed.csv`: VAT report with filled `COST_PRICE_OF_ITEMS` (Col T) and `PRICE_OF_ITEMS_AMT_VAT_EXCL` (Col U).
-- `<filename>_country_summary.csv`: Route summary table of transfers, units, and total value.
-
-### Batch Folder Mode
-- `processed/<filename>.csv`: Processed report for each input CSV.
-- `processed/<filename>_country_summary.csv`: Route summary for each file.
-- `processed/batch_country_summary.csv`: Consolidated cross-border totals for all files.
+Runs the complete test suite (10/10 tests) across all workspace member packages.

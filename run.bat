@@ -34,6 +34,6 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Execute Python application with production dependencies only (opens Web App by default or CLI with arguments)
-uv run --no-dev python -m amazon_vat_automation.process_report %*
+:: Launch Amazon Automation Tools Web Hub from workspace
+uv run --no-dev --package web-hub python -m web_server.server %*
 pause >nul

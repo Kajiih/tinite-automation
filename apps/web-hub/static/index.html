@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Amazon Automation Tools Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <link rel="stylesheet" href="./css/main.css">
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col font-sans">
+
+  <!-- Header & Navigation Bar -->
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      
+      <!-- Brand & Title -->
+      <div class="flex items-center space-x-3">
+        <div class="bg-blue-600 text-white p-2 rounded-xl font-bold text-lg leading-none shadow-sm">
+          📦
+        </div>
+        <div>
+          <h1 class="text-base font-bold text-slate-900 leading-tight">Amazon Automation Tools Hub</h1>
+          <p class="text-xs text-slate-500">VAT Reporting, FC Transfers & ASIN Asset Automation</p>
+        </div>
+      </div>
+
+      <!-- Tool Switcher Tabs & Engine Status -->
+      <div class="flex items-center space-x-3">
+        <nav class="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+          <button id="tab-btn-vat" class="px-3.5 py-1.5 rounded-lg bg-white text-blue-700 shadow-sm transition-all">
+            📊 VAT Reports
+          </button>
+          <button id="tab-btn-images" class="px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+            🖼️ ASIN Image Duplicator
+          </button>
+        </nav>
+
+        <div id="engine-status" class="flex items-center space-x-2 text-xs bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1.5 rounded-full font-medium">
+          <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+          <span id="engine-status-text">Loading WebAssembly...</span>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
+
+    <!-- Privacy Banner -->
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start space-x-3">
+      <span class="text-blue-600 text-xl leading-none">🔒</span>
+      <div class="text-sm text-blue-900">
+        <p class="font-semibold">100% Private & Client-Side Execution</p>
+        <p class="text-blue-700 text-xs mt-0.5">
+          All processing runs locally inside your browser using Python WebAssembly. No files, financial data, prices, or images are uploaded to any remote server.
+        </p>
+      </div>
+    </div>
+
+    <!-- Error Banner -->
+    <div id="error-banner" class="hidden bg-red-50 border-2 border-red-300 rounded-2xl p-6 shadow-sm space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2 text-red-900 font-bold text-base">
+          <span>❌</span>
+          <span id="error-title">Processing Error</span>
+        </div>
+        <button id="btn-dismiss-error" class="text-xs font-semibold text-red-700 hover:text-red-900 bg-red-100 px-2.5 py-1 rounded-md">
+          Dismiss
+        </button>
+      </div>
+      <p class="text-xs text-red-800" id="error-summary">An error occurred during execution.</p>
+      <pre id="error-traceback" class="bg-slate-900 text-red-300 font-mono text-xs p-4 rounded-xl overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-96 custom-scrollbar"></pre>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TOOL 1: VAT REPORT AUTOMATION SECTION      -->
+    <!-- ========================================== -->
+    <section id="section-vat" class="space-y-6">
+      
+      <!-- Drop Zones Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        <!-- VAT Report Drop Zone -->
+        <div id="dropzone-report" class="dropzone relative border-2 border-dashed border-slate-300 rounded-2xl p-8 bg-white flex flex-col items-center justify-center text-center cursor-pointer hover:border-blue-500 shadow-sm">
+          <input type="file" id="file-report" accept=".csv" multiple class="hidden" />
+          <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center text-2xl mb-3 pointer-events-none">
+            📄
+          </div>
+          <h3 class="font-semibold text-slate-800 text-sm pointer-events-none">1. Select VAT Report CSV(s) or Folder</h3>
+          <p class="text-xs text-slate-500 mt-1 pointer-events-none" id="label-report">Drag & drop CSV file(s) or folder here, or click to browse</p>
+          <div id="badge-report" class="mt-3 hidden text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-md"></div>
+        </div>
+
+        <!-- Price Catalog Drop Zone -->
+        <div id="dropzone-catalog" class="dropzone relative border-2 border-dashed border-slate-300 rounded-2xl p-8 bg-white flex flex-col items-center justify-center text-center cursor-pointer hover:border-blue-500 shadow-sm">
+          <input type="file" id="file-catalog" accept=".xlsx" class="hidden" />
+          <div class="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center text-2xl mb-3 pointer-events-none">
+            📊
+          </div>
+          <h3 class="font-semibold text-slate-800 text-sm pointer-events-none">2. Select Excel Price Catalog</h3>
+          <p class="text-xs text-slate-500 mt-1 pointer-events-none" id="label-catalog">Drag & drop Excel (.xlsx) file here, or click to browse</p>
+          <div id="badge-catalog" class="mt-3 hidden text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-md"></div>
+        </div>
+
+      </div>
+
+      <!-- VAT Processing Loader -->
+      <div id="processing-loader-vat" class="hidden bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-4 shadow-sm">
+        <div class="inline-block animate-spin text-3xl">⚙️</div>
+        <h3 class="font-semibold text-slate-800 text-base">Processing VAT reports in WebAssembly...</h3>
+        <p class="text-xs text-slate-500">Matching ASIN cost prices and aggregating cross-border country routes.</p>
+      </div>
+
+      <!-- VAT Results Section -->
+      <div id="results-section-vat" class="hidden space-y-6">
+
+        <!-- Batch File Selector Toolbar -->
+        <div id="file-switcher-container" class="hidden bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center space-x-2">
+            <span class="text-base">📁</span>
+            <label for="select-file-view" class="text-xs font-bold text-slate-700 uppercase tracking-wider">Active File View:</label>
+          </div>
+          <select id="select-file-view" class="bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-lg px-3 py-1.5 font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none w-full sm:w-auto min-w-[280px]">
+            <!-- Injected via JavaScript -->
+          </select>
+        </div>
+
+        <!-- Metrics Cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Rows</p>
+            <p class="text-2xl font-bold text-slate-900 mt-1" id="metric-total-rows">0</p>
+          </div>
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">FC_TRANSFER Rows</p>
+            <p class="text-2xl font-bold text-blue-600 mt-1" id="metric-fc-rows">0</p>
+          </div>
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Value Added</p>
+            <p class="text-2xl font-bold text-emerald-600 mt-1" id="metric-value-added">€0.00</p>
+          </div>
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Missing ASINs</p>
+            <p class="text-2xl font-bold text-slate-900 mt-1" id="metric-missing-asins">0</p>
+          </div>
+        </div>
+
+        <!-- Warning Box for Missing ASINs -->
+        <div id="warning-missing-asins" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
+          <p class="font-semibold flex items-center">
+            <span class="mr-2">⚠️</span> Some ASINs were not found in the price catalog:
+          </p>
+          <ul id="list-missing-asins" class="list-disc list-inside text-xs mt-2 space-y-1 text-amber-800"></ul>
+        </div>
+
+        <!-- Route Breakdown Table & Action Buttons -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          
+          <div class="p-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+              <h3 class="font-bold text-slate-900 text-base" id="route-table-title">Departure Country × Arrival Country Summary</h3>
+              <p class="text-xs text-slate-500" id="route-table-subtitle">Cross-border transfer aggregation for FC_TRANSFER transactions</p>
+            </div>
+            <div class="flex flex-wrap gap-2" id="download-buttons-container">
+              <!-- Dynamic Download Buttons -->
+            </div>
+          </div>
+
+          <!-- Country Filter Controls -->
+          <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="flex items-center space-x-1.5">
+                <label for="filter-departure" class="font-semibold text-slate-600">Departure:</label>
+                <select id="filter-departure" class="bg-white border border-slate-300 text-slate-700 rounded-md px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+                  <option value="ALL">All Departures</option>
+                </select>
+              </div>
+
+              <div class="flex items-center space-x-1.5">
+                <label for="filter-arrival" class="font-semibold text-slate-600">Arrival:</label>
+                <select id="filter-arrival" class="bg-white border border-slate-300 text-slate-700 rounded-md px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+                  <option value="ALL">All Arrivals</option>
+                </select>
+              </div>
+
+              <div class="flex items-center space-x-1.5">
+                <input type="text" id="filter-search" placeholder="Quick search..." class="bg-white border border-slate-300 text-slate-700 rounded-md px-2.5 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none w-32" />
+              </div>
+
+              <button id="btn-reset-filters" class="hidden text-blue-600 hover:text-blue-800 font-medium hover:underline">
+                Clear filters
+              </button>
+            </div>
+
+            <div class="text-slate-500 font-medium text-right" id="filter-status-count"></div>
+          </div>
+
+          <!-- Table Body -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
+                <tr>
+                  <th class="px-5 py-3">Departure</th>
+                  <th class="px-5 py-3">Arrival</th>
+                  <th class="px-5 py-3 text-right">Transfer Count</th>
+                  <th class="px-5 py-3 text-right">Total Units</th>
+                  <th class="px-5 py-3 text-right">Total Amount (€)</th>
+                </tr>
+              </thead>
+              <tbody id="table-routes-body" class="divide-y divide-slate-100 font-mono text-xs"></tbody>
+              <tfoot id="table-routes-foot" class="bg-slate-100 font-bold border-t-2 border-slate-300 text-xs font-mono"></tfoot>
+            </table>
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TOOL 2: ASIN IMAGE DUPLICATOR SECTION      -->
+    <!-- ========================================== -->
+    <section id="section-images" class="hidden space-y-6">
+
+      <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+        <h2 class="text-base font-bold text-slate-900">Amazon ASIN Image Duplicator & Renamer</h2>
+        <p class="text-xs text-slate-600 leading-relaxed">
+          Takes template images (e.g. <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-700 font-mono">MAIN.jpg</code>, <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-700 font-mono">PT01.jpg</code>) and a list of target ASINs, generating a dedicated folder for each ASIN: <br/>
+          <code class="bg-slate-100 px-2 py-1 rounded text-slate-800 font-mono text-xs mt-1 inline-block">&lt;ASIN&gt;/&lt;ASIN&gt;.&lt;SUFFIX&gt;.&lt;extension&gt;</code>
+        </p>
+      </div>
+
+      <!-- Image Tool Inputs Grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <!-- Template Images Dropzone -->
+        <div id="dropzone-image-templates" class="dropzone relative border-2 border-dashed border-slate-300 rounded-2xl p-8 bg-white flex flex-col items-center justify-center text-center cursor-pointer hover:border-blue-500 shadow-sm">
+          <input type="file" id="file-image-templates" accept="image/*,.tif,.tiff" multiple class="hidden" />
+          <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center text-2xl mb-3 pointer-events-none">
+            🖼️
+          </div>
+          <h3 class="font-semibold text-slate-800 text-sm pointer-events-none">1. Select Template Images or Folder</h3>
+          <p class="text-xs text-slate-500 mt-1 pointer-events-none" id="label-image-templates">Drag & drop template images (.jpg, .png, .webp, .tif) or folder</p>
+          <div id="badge-image-templates" class="mt-3 hidden text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200 px-2.5 py-1 rounded-md"></div>
+        </div>
+
+        <!-- ASIN Input Zone (File Drop + Text Area) -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between space-y-4">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="font-semibold text-slate-800 text-sm flex items-center">
+                <span class="mr-2">📋</span> 2. Provide Target ASINs
+              </h3>
+              <span id="badge-asin-count" class="hidden text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-md">0 ASINs</span>
+            </div>
+            <p class="text-xs text-slate-500">Paste ASINs below or drag & drop a file (<code class="font-mono">.txt</code>, <code class="font-mono">.csv</code>, <code class="font-mono">.xlsx</code>):</p>
+            <div id="dropzone-asins" class="dropzone relative border-2 border-dashed border-slate-300 rounded-xl p-3 bg-slate-50 hover:border-blue-400 transition-all text-center cursor-pointer">
+              <input type="file" id="file-asins" accept=".txt,.csv,.xlsx" class="hidden" />
+              <span class="text-xs font-semibold text-blue-600 hover:text-blue-800 pointer-events-none">
+                📁 Upload .txt / .csv / .xlsx ASIN file
+              </span>
+            </div>
+          </div>
+
+          <textarea id="textarea-asins" rows="5" placeholder="B089WJC6Z4&#10;B089N1ND4V&#10;B07XYZ1234&#10;(or separated by commas / spaces)" class="w-full text-xs font-mono p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-50 text-slate-800 resize-none custom-scrollbar"></textarea>
+        </div>
+
+      </div>
+
+      <!-- Image Generation Action Bar -->
+      <div id="image-action-bar" class="hidden bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="space-y-1">
+          <h4 class="font-bold text-slate-900 text-sm" id="image-summary-heading">Ready to Generate Images</h4>
+          <p class="text-xs text-slate-500" id="image-summary-subheading">0 template images × 0 target ASINs = 0 total files</p>
+        </div>
+        <button id="btn-generate-images" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-5 py-2.5 rounded-xl shadow-sm transition flex items-center justify-center space-x-2">
+          <span>⬇</span>
+          <span>Download All Images Archive (.zip)</span>
+        </button>
+      </div>
+
+      <!-- Image Preview Table -->
+      <div id="image-preview-section" class="hidden bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden space-y-0">
+        <div class="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+          <h4 class="font-bold text-slate-800 text-xs uppercase tracking-wider">Generated Asset Structure Preview</h4>
+          <span class="text-xs text-slate-500 font-mono" id="image-preview-count"></span>
+        </div>
+        <div class="max-h-80 overflow-y-auto custom-scrollbar">
+          <table class="w-full text-left text-xs font-mono">
+            <thead class="bg-slate-100 text-slate-600 border-b border-slate-200 sticky top-0">
+              <tr>
+                <th class="px-5 py-2.5">Target ASIN</th>
+                <th class="px-5 py-2.5">Source Image</th>
+                <th class="px-5 py-2.5">Generated Path in .zip</th>
+              </tr>
+            </thead>
+            <tbody id="table-image-preview-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
+    Amazon Automation Tools Hub • Powered by Python WebAssembly (Pyodide)
+  </footer>
+
+  <!-- Application Bootstrap -->
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

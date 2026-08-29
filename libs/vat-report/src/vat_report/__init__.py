@@ -4,7 +4,7 @@ Amazon VAT Report Automation Package
 
 from __future__ import annotations
 
-from amazon_vat_automation.process_report import (
+from vat_report.engine import (
     BatchProcessingResult,
     ColumnHeader,
     FileProcessingResult,
@@ -16,10 +16,9 @@ from amazon_vat_automation.process_report import (
     main,
     process_batch,
     process_vat_report,
-    serve_web,
 )
 
-__version__: str = "0.1.0"
+__version__: str = "0.2.0"
 __all__: list[str] = [
     "BatchProcessingResult",
     "ColumnHeader",
@@ -32,5 +31,4 @@ __all__: list[str] = [
     "main",
     "process_batch",
     "process_vat_report",
-    "serve_web",
 ]

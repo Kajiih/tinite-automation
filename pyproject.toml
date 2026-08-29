@@ -1,15 +1,13 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
-name = "amazon-vat-report-automation"
-version = "0.1.0"
-description = "Amazon VAT Transaction Report FC_Transfer price automation and cross-border country summaries"
+name = "amazon-automation-monorepo"
+version = "0.2.0"
+description = "Amazon VAT Transaction Reporting and ASIN Asset Automation Monorepo"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "openpyxl>=3.1.0",
+    "vat-report",
+    "image-renamer",
+    "web-hub",
 ]
 
 [dependency-groups]
@@ -17,15 +15,28 @@ dev = [
     "pytest>=8.0.0",
 ]
 
-[project.scripts]
-process-report = "amazon_vat_automation.process_report:main"
+[tool.uv.workspace]
+members = [
+    "apps/*",
+    "libs/*",
+]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/amazon_vat_automation"]
+[tool.uv.sources]
+vat-report = { workspace = true }
+image-renamer = { workspace = true }
+web-hub = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
+testpaths = [
+    "libs/vat-report/tests",
+    "libs/image-renamer/tests",
+    "apps/web-hub/tests",
+]
+pythonpath = [
+    "libs/vat-report/src",
+    "libs/image-renamer/src",
+    "apps/web-hub/src",
+]
 
 [tool.uv]
 index-url = "https://pypi.org/simple"

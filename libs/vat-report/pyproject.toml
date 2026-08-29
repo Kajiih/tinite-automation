@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vat-report"
+version = "0.2.0"
+description = "Amazon VAT Transaction Report FC_Transfer price automation engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1.0",
+]
+
+[project.scripts]
+vat-report = "vat_report.engine:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vat_report"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
