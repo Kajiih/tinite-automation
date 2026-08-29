@@ -147,6 +147,30 @@ def _is_ancestor_commit(git_path: str, root: Path, remote_sha: str) -> bool:
         return ancestor_check.returncode == 0
 
 
+def _parse_version_tuple(version_str: str) -> tuple[int, ...]:
+    """Parse version string into integer tuple for comparison (e.g. '0.2.1' -> (0, 2, 1))."""
+    if not version_str:
+        return ()
+    digits = [int(part) for part in version_str.strip().lstrip("v").split(".") if part.isdigit()]
+    return tuple(digits)
+
+
+def _fetch_remote_pyproject_version() -> str:
+    """Fetch project version from remote main pyproject.toml."""
+    url = "https://raw.githubusercontent.com/Kajiih/tinite-automation/main/pyproject.toml"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Tinite-Automation-Updater"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:  # ruff: ignore[suspicious-url-open-usage]
+            parsed = tomllib.loads(response.read().decode("utf-8"))
+            return str(parsed.get("project", {}).get("version", ""))
+    except (urllib.error.URLError, tomllib.TOMLDecodeError, OSError) as err:
+        logger.debug("Failed to query remote pyproject.toml: %s", err)
+        return ""
+
+
 class UpdateCheckResult(TypedDict):
     """Structured payload representing application update state."""
 
@@ -181,14 +205,21 @@ def check_update_available(repo_root: Path | None = None) -> UpdateCheckResult:
         if version_file.is_file():
             local_sha = version_file.read_text(encoding="utf-8").strip()
 
+    local_version = get_app_version(resolved_root)
+
     if is_git_repo and remote_sha and git_path:
         is_already_contained = _is_ancestor_commit(git_path, resolved_root, remote_sha)
         update_available = not is_already_contained
+    elif local_sha and remote_sha:
+        update_available = local_sha != remote_sha
     else:
-        update_available = bool(remote_sha and local_sha and (remote_sha != local_sha))
+        remote_version = _fetch_remote_pyproject_version()
+        local_tuple = _parse_version_tuple(local_version or "")
+        remote_tuple = _parse_version_tuple(remote_version)
+        update_available = bool(remote_tuple and local_tuple and (remote_tuple > local_tuple))
 
     return {
-        "version": get_app_version(resolved_root),
+        "version": local_version,
         "update_available": update_available,
         "local_sha": local_sha[:7] if local_sha else "",
         "remote_sha": remote_sha[:7] if remote_sha else "",
@@ -288,22 +319,35 @@ def _extract_zip_contents(zip_bytes: bytes, repo_root: Path) -> None:
                 target_file.write_bytes(zf.read(member))
 
 
-def _update_from_github_archive(repo_root: Path) -> None:
+def _download_github_archive() -> bytes:
+    """Fetch repository archive zip bytes from GitHub."""
+    req = urllib.request.Request(
+        GITHUB_REPO_ARCHIVE_URL,
+        headers={"User-Agent": "Amazon-Automation-WebHub-Updater"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:  # ruff: ignore[suspicious-url-open-usage]
+        data = response.read()
+        if isinstance(data, bytes):
+            return data
+        return bytes(data)
+
+
+def _update_from_github_archive(repo_root: Path, remote_sha: str = "") -> None:
     """Download and extract GitHub repository zip archive as a fallback.
 
     Args:
         repo_root: Path to destination repository directory.
+        remote_sha: Optional remote commit SHA to write into .version_sha.
     """
     if not GITHUB_REPO_ARCHIVE_URL.startswith("https://"):
         return
     try:
-        req = urllib.request.Request(
-            GITHUB_REPO_ARCHIVE_URL,
-            headers={"User-Agent": "Amazon-Automation-WebHub-Updater"},
-        )
-        with urllib.request.urlopen(req, timeout=30) as response:  # ruff: ignore[suspicious-url-open-usage]
-            zip_bytes = response.read()
-
+        zip_bytes = _download_github_archive()
         _extract_zip_contents(zip_bytes, repo_root)
     except (urllib.error.URLError, zipfile.BadZipFile, OSError) as err:
         logger.warning("GitHub archive download/extract error: %s", err)
+        return
+
+    latest_sha = remote_sha or _fetch_github_api_sha()
+    if latest_sha:
+        (repo_root / ".version_sha").write_text(latest_sha.strip() + "\n", encoding="utf-8")
