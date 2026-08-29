@@ -86,18 +86,28 @@ document.getElementById("btn-update-app")?.addEventListener("click", async () =>
   }
 });
 
+let currentAppVersion = "";
+
 // Check if an application update is available
 async function checkForAppUpdate() {
   const btn = document.getElementById("btn-update-app");
-  if (!btn) return;
   try {
     const res = await fetch("/api/check-update");
     if (!res.ok) return;
     const data = await res.json();
-    if (data.update_available) {
-      btn.classList.remove("hidden");
-    } else {
-      btn.classList.add("hidden");
+    if (data.version) {
+      currentAppVersion = data.version;
+      const versionEl = document.getElementById("app-version-display");
+      if (versionEl) {
+        versionEl.textContent = `v${currentAppVersion} • `;
+      }
+    }
+    if (btn) {
+      if (data.update_available) {
+        btn.classList.remove("hidden");
+      } else {
+        btn.classList.add("hidden");
+      }
     }
   } catch (err) {
     console.debug("Update check skipped:", err);
@@ -118,8 +128,9 @@ async function bootApp() {
         if (status === "Ready") {
           engineStatus.className =
             "flex items-center space-x-2 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-full font-medium";
+          const versionPrefix = currentAppVersion ? `v${currentAppVersion} • ` : "";
           engineStatus.innerHTML =
-            '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span>v0.2.0 • WebAssembly Ready</span>';
+            `<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span><span id="app-version-display">${versionPrefix}</span>WebAssembly Ready</span>`;
         } else {
           engineStatusText.textContent = status;
         }

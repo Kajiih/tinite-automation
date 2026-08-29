@@ -1,6 +1,6 @@
 [project]
 name = "tinite-automation"
-version = "0.2.0"
+version = "0.2.1"
 description = "Tinite Automation - Amazon VAT Transaction Reporting and ASIN Asset Automation Monorepo"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -12,11 +12,13 @@ import logging
 import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import tomllib
 import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -48,6 +50,28 @@ def resolve_workspace_root(start: Path | None = None) -> Path:
         if (directory / "pyproject.toml").is_file():
             return directory
     return curr
+
+
+def get_app_version(repo_root: Path | None = None) -> str | None:
+    """Retrieve the single-source-of-truth application version from root pyproject.toml.
+
+    Args:
+        repo_root: Optional workspace repository root Path.
+
+    Returns:
+        Version string extracted from pyproject.toml, or None if unavailable.
+    """
+    resolved_root = resolve_workspace_root(repo_root)
+    pyproject_file = resolved_root / "pyproject.toml"
+    if pyproject_file.is_file():
+        try:
+            parsed = tomllib.loads(pyproject_file.read_text(encoding="utf-8"))
+            version = parsed.get("project", {}).get("version")
+            if version:
+                return str(version)
+        except (tomllib.TOMLDecodeError, OSError):
+            return None
+    return None
 
 
 def _get_local_git_sha(git_path: str, root: Path) -> str:
@@ -123,14 +147,23 @@ def _is_ancestor_commit(git_path: str, root: Path, remote_sha: str) -> bool:
         return ancestor_check.returncode == 0
 
 
-def check_update_available(repo_root: Path | None = None) -> dict[str, bool | str]:
+class UpdateCheckResult(TypedDict):
+    """Structured payload representing application update state."""
+
+    version: str | None
+    update_available: bool
+    local_sha: str
+    remote_sha: str
+
+
+def check_update_available(repo_root: Path | None = None) -> UpdateCheckResult:
     """Check whether a newer version or commit is available on the remote repository.
 
     Args:
         repo_root: Optional workspace repository root Path.
 
     Returns:
-        Dictionary containing `update_available` (bool), `local_sha` (str), `remote_sha` (str).
+        UpdateCheckResult containing version, update_available, local_sha, remote_sha.
     """
     resolved_root = resolve_workspace_root(repo_root)
     git_dir = resolved_root / ".git"
@@ -155,6 +188,7 @@ def check_update_available(repo_root: Path | None = None) -> dict[str, bool | st
         update_available = bool(remote_sha and local_sha and (remote_sha != local_sha))
 
     return {
+        "version": get_app_version(resolved_root),
         "update_available": update_available,
         "local_sha": local_sha[:7] if local_sha else "",
         "remote_sha": remote_sha[:7] if remote_sha else "",

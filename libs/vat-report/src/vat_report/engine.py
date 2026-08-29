@@ -155,6 +155,31 @@ class _ReportAccumulator:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _CatalogColumnIndices:
+    """Column indices for ASIN and unit purchase price in a catalog worksheet."""
+
+    asin_index: int
+    price_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class _TransferRowOutcome:
+    """Outcome metrics from processing a single FC_TRANSFER row."""
+
+    updated_count: int
+    value_added: float
+    missing_count: int
+
+
+@dataclass(slots=True)
+class _ScanResult:
+    """Aggregated outcome of CSV row transformation."""
+
+    output_rows: MutableSequence[MutableSequence[str]]
+    accumulator: _ReportAccumulator
+
+
 def _parse_price_value(raw_price: object) -> float | None:
     """Parse a cell value into a numeric price, handling commas and currency symbols."""
     if raw_price is None:
@@ -176,7 +201,7 @@ def _parse_price_value(raw_price: object) -> float | None:
         return None
 
 
-def _find_catalog_columns(first_row: Sequence[object]) -> tuple[int, int]:
+def _find_catalog_columns(first_row: Sequence[object]) -> _CatalogColumnIndices:
     """Identify column index positions for ASIN and price in a header row."""
     asin_index = 0
     price_index = 1
@@ -191,7 +216,7 @@ def _find_catalog_columns(first_row: Sequence[object]) -> tuple[int, int]:
         elif any(kw in header for kw in price_keywords):
             price_index = col_idx
 
-    return asin_index, price_index
+    return _CatalogColumnIndices(asin_index=asin_index, price_index=price_index)
 
 
 def _extract_catalog_rows(
@@ -247,15 +272,14 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
     logger.info("Loading price catalog from: %s", price_catalog_path)
     workbook = openpyxl.load_workbook(filename=price_catalog_path, data_only=True, read_only=True)
     target_worksheet = None
-    asin_col_idx = 0
-    price_col_idx = 1
+    cols = _CatalogColumnIndices(asin_index=0, price_index=1)
 
     for sheet_name in workbook.sheetnames:
         worksheet = workbook[sheet_name]
         first_row = next(worksheet.iter_rows(values_only=True), None)
         if not first_row:
             continue
-        asin_col_idx, price_col_idx = _find_catalog_columns(first_row)
+        cols = _find_catalog_columns(first_row)
         target_worksheet = worksheet
         break
 
@@ -265,7 +289,7 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
             msg = f"No readable worksheets found in Excel file: {price_catalog_path}"
             raise ValueError(msg)
 
-    price_catalog = _extract_catalog_rows(target_worksheet, asin_col_idx, price_col_idx)
+    price_catalog = _extract_catalog_rows(target_worksheet, cols.asin_index, cols.price_index)
     workbook.close()
 
     if not price_catalog:
@@ -425,7 +449,7 @@ def _process_transfer_row(
     price_catalog: Mapping[str, float],
     missing_asins: set[str],
     route_statistics: MutableMapping[RouteKey, RouteMetric],
-) -> tuple[int, float, int]:
+) -> _TransferRowOutcome:
     """Populate pricing for a single FC_TRANSFER row."""
     a_idx = indices["asin"]
     asin = row_cells[a_idx].strip() if len(row_cells) > a_idx else ""
@@ -465,17 +489,17 @@ def _process_transfer_row(
             row_cells[tot_a_idx] = ""
 
         route_statistics[route_key].add_transfer(quantity=quantity, amount_eur=total_price)
-        return 1, total_price, 0
+        return _TransferRowOutcome(updated_count=1, value_added=total_price, missing_count=0)
 
     missing_asins.add(asin)
     route_statistics[route_key].add_transfer(quantity=quantity, amount_eur=0.0)
-    return 0, 0.0, 1
+    return _TransferRowOutcome(updated_count=0, value_added=0.0, missing_count=1)
 
 
 def _scan_and_transform_csv(
     infile: TextIO,
     price_catalog: Mapping[str, float],
-) -> tuple[MutableSequence[MutableSequence[str]], _ReportAccumulator]:
+) -> _ScanResult:
     """Read CSV, process FC_TRANSFER rows, and aggregate metric state."""
     reader = csv.reader(infile)
     try:
@@ -501,20 +525,22 @@ def _scan_and_transform_csv(
 
         if transaction_type == TransactionType.FC_TRANSFER:
             accumulator.fc_transfer_count += 1
-            updated, val_added, missing = _process_transfer_row(
+            outcome = _process_transfer_row(
                 row_cells,
                 indices,
                 price_catalog,
                 accumulator.missing_asins,
                 accumulator.route_statistics,
             )
-            accumulator.fc_transfer_updated += updated
-            accumulator.total_value_added = round(accumulator.total_value_added + val_added, 2)
-            accumulator.missing_rows_count += missing
+            accumulator.fc_transfer_updated += outcome.updated_count
+            accumulator.total_value_added = round(
+                accumulator.total_value_added + outcome.value_added, 2
+            )
+            accumulator.missing_rows_count += outcome.missing_count
 
         output_rows.append(row_cells)
 
-    return output_rows, accumulator
+    return _ScanResult(output_rows=output_rows, accumulator=accumulator)
 
 
 def process_vat_report(
@@ -549,36 +575,36 @@ def process_vat_report(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with report_path.open(encoding=DEFAULT_ENCODING, newline="") as infile:
-        output_rows, accumulator = _scan_and_transform_csv(infile, price_catalog)
+        scan_res = _scan_and_transform_csv(infile, price_catalog)
 
     with output_path.open(mode="w", encoding=DEFAULT_ENCODING, newline="") as outfile:
         writer = csv.writer(outfile, quoting=csv.QUOTE_ALL, lineterminator=CSV_LINE_TERMINATOR)
-        writer.writerows(output_rows)
+        writer.writerows(scan_res.output_rows)
 
     summary_path = (
         output_path.parent / f"{output_path.stem.replace('_processed', '')}_country_summary.csv"
     )
     if export_summary:
-        export_country_summary(accumulator.route_statistics, summary_path)
+        export_country_summary(scan_res.accumulator.route_statistics, summary_path)
 
     logger.info(
         "Finished processing '%s': %d total rows, %d FC_TRANSFER rows filled (added €%.2f).",
         report_path.name,
-        accumulator.total_rows,
-        accumulator.fc_transfer_updated,
-        accumulator.total_value_added,
+        scan_res.accumulator.total_rows,
+        scan_res.accumulator.fc_transfer_updated,
+        scan_res.accumulator.total_value_added,
     )
     return FileProcessingResult(
         report_path=report_path,
         output_path=output_path,
         summary_path=summary_path if export_summary else None,
-        total_rows=accumulator.total_rows,
-        fc_transfer_count=accumulator.fc_transfer_count,
-        fc_transfer_updated=accumulator.fc_transfer_updated,
-        missing_asins=sorted(accumulator.missing_asins),
-        missing_rows_count=accumulator.missing_rows_count,
-        total_value_added=accumulator.total_value_added,
-        route_statistics=dict(accumulator.route_statistics),
+        total_rows=scan_res.accumulator.total_rows,
+        fc_transfer_count=scan_res.accumulator.fc_transfer_count,
+        fc_transfer_updated=scan_res.accumulator.fc_transfer_updated,
+        missing_asins=sorted(scan_res.accumulator.missing_asins),
+        missing_rows_count=scan_res.accumulator.missing_rows_count,
+        total_value_added=scan_res.accumulator.total_value_added,
+        route_statistics=dict(scan_res.accumulator.route_statistics),
     )
 
 

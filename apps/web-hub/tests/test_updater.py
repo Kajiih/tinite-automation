@@ -8,6 +8,7 @@ from web_server import updater
 from web_server.updater import (
     UpdateResult,
     check_update_available,
+    get_app_version,
     perform_app_update,
     resolve_workspace_root,
 )
@@ -27,6 +28,14 @@ def test_resolve_workspace_root(tmp_path: Path) -> None:
     nested_dir.mkdir(parents=True)
 
     assert resolve_workspace_root(nested_dir) == workspace
+
+
+def test_get_app_version(tmp_path: Path) -> None:
+    """Verify get_app_version extracts project version from pyproject.toml or returns None."""
+    assert get_app_version(tmp_path) is None
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nversion = '0.9.5'\n")
+    assert get_app_version(tmp_path) == "0.9.5"
 
 
 def test_check_update_available_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

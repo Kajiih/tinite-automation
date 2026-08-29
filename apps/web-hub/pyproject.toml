@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "web-hub"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Amazon Automation Tools Web Hub Application"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,6 +12,10 @@ dependencies = [
     "vat-report",
     "image-renamer",
 ]
+
+[tool.hatch.version]
+path = "../../pyproject.toml"
+pattern = 'version = "(?P<version>[^"]+)"'
 
 [project.scripts]
 amazon-tools = "web_server.server:main"

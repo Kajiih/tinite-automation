@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.resources
 import importlib.util
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -31,21 +32,29 @@ PRICE_CATALOG_PATH: Path = (
 )
 
 
-# TODO: Extract the output in a dataclass, same for other tuple output
+@dataclass(slots=True)
+class WorkflowPreparedInputs:
+    """Encapsulates prepared VAT report and price catalog sample file paths."""
+
+    report_path: Path
+    catalog_path: Path
+
+
 @pytest.fixture
-def prepared_inputs(tmp_path: Path) -> tuple[Path, Path]:
+def prepared_inputs(tmp_path: Path) -> WorkflowPreparedInputs:
     """Prepare copies of sample report and catalog in isolated directory."""
     report = tmp_path / "report.csv"
     catalog = tmp_path / "catalog.xlsx"
     report.write_bytes(SAMPLE_REPORT_PATH.read_bytes())
     catalog.write_bytes(PRICE_CATALOG_PATH.read_bytes())
-    return report, catalog
+    return WorkflowPreparedInputs(report_path=report, catalog_path=catalog)
 
 
-def test_single_vat_report_web_workflow(prepared_inputs: tuple[Path, Path]) -> None:
+def test_single_vat_report_web_workflow(prepared_inputs: WorkflowPreparedInputs) -> None:
     """Verify single VAT report WebAssembly execution returns complete valid JSON payload."""
-    report_file, catalog_file = prepared_inputs
-    data = json.loads(bridge.run_vat_single(str(report_file), str(catalog_file)))
+    data = json.loads(
+        bridge.run_vat_single(str(prepared_inputs.report_path), str(prepared_inputs.catalog_path))
+    )
     routes = data.pop("routes")
 
     assert data == {
