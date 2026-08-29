@@ -105,6 +105,17 @@
     <!-- Results Section -->
     <div id="results-section" class="hidden space-y-6">
 
+      <!-- Batch File Selector Toolbar -->
+      <div id="file-switcher-container" class="hidden bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-center space-x-2">
+          <span class="text-base">📁</span>
+          <label for="select-file-view" class="text-xs font-bold text-slate-700 uppercase tracking-wider">Active File View:</label>
+        </div>
+        <select id="select-file-view" class="bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-lg px-3 py-1.5 font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none w-full sm:w-auto min-w-[280px]">
+          <!-- Injected via JavaScript -->
+        </select>
+      </div>
+
       <!-- Metrics Cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
@@ -136,16 +147,49 @@
       <!-- Route Breakdown Table & Action Buttons -->
       <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         
-        <div class="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <!-- Header & Action Buttons -->
+        <div class="p-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <h3 class="font-bold text-slate-900 text-base">Departure Country × Arrival Country Summary</h3>
-            <p class="text-xs text-slate-500">Cross-border transfer aggregation for FC_TRANSFER transactions</p>
+            <h3 class="font-bold text-slate-900 text-base" id="route-table-title">Departure Country × Arrival Country Summary</h3>
+            <p class="text-xs text-slate-500" id="route-table-subtitle">Cross-border transfer aggregation for FC_TRANSFER transactions</p>
           </div>
           <div class="flex flex-wrap gap-2" id="download-buttons-container">
             <!-- Dynamic Download Buttons Injected Here -->
           </div>
         </div>
 
+        <!-- Filter Controls Toolbar -->
+        <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center space-x-1.5">
+              <label for="filter-departure" class="font-semibold text-slate-600">Departure:</label>
+              <select id="filter-departure" class="bg-white border border-slate-300 text-slate-700 rounded-md px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+                <option value="ALL">All Departures</option>
+              </select>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <label for="filter-arrival" class="font-semibold text-slate-600">Arrival:</label>
+              <select id="filter-arrival" class="bg-white border border-slate-300 text-slate-700 rounded-md px-2 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+                <option value="ALL">All Arrivals</option>
+              </select>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+              <input type="text" id="filter-search" placeholder="Quick search..." class="bg-white border border-slate-300 text-slate-700 rounded-md px-2.5 py-1 focus:ring-1 focus:ring-blue-500 focus:outline-none w-32" />
+            </div>
+
+            <button id="btn-reset-filters" class="hidden text-blue-600 hover:text-blue-800 font-medium hover:underline">
+              Clear filters
+            </button>
+          </div>
+
+          <div class="text-slate-500 font-medium text-right" id="filter-status-count">
+            <!-- Route count injected here -->
+          </div>
+        </div>
+
+        <!-- Route Breakdown Table -->
         <div class="overflow-x-auto">
           <table class="w-full text-left text-sm">
             <thead class="bg-slate-50 text-slate-600 text-xs uppercase font-semibold border-b border-slate-200">
@@ -160,6 +204,9 @@
             <tbody id="table-routes-body" class="divide-y divide-slate-100 font-mono text-xs">
               <!-- Route Rows Injected Here -->
             </tbody>
+            <tfoot id="table-routes-foot" class="bg-slate-100 font-bold border-t-2 border-slate-300 text-xs font-mono">
+              <!-- Total Row Injected Here -->
+            </tfoot>
           </table>
         </div>
 
@@ -180,11 +227,18 @@
     let selectedReportFiles = [];
     let selectedCatalogFile = null;
 
+    // Processed Data Cache
+    let currentProcessingResult = null;
+    let activeFileIndex = "all"; // 'all' or integer file index
+    let currentDepartureFilter = "ALL";
+    let currentArrivalFilter = "ALL";
+    let currentSearchText = "";
+
     const pythonBridgeScript = `
 import json
 import csv
 from pathlib import Path
-from process_report import process_vat_report, process_batch, load_price_catalog
+from amazon_vat_automation.process_report import process_vat_report, process_batch, load_price_catalog
 
 def run_single(report_filename, catalog_filename):
     price_catalog = load_price_catalog(Path(catalog_filename))
@@ -221,9 +275,9 @@ def run_batch(input_dir_name, catalog_filename):
         Path(catalog_filename),
     )
     
-    routes = []
+    consolidated_routes = []
     for key, metric in sorted(batch_result.consolidated_routes.items()):
-        routes.append({
+        consolidated_routes.append({
             "departure": key.departure_country,
             "arrival": key.arrival_country,
             "transfers": metric.transfer_count,
@@ -231,6 +285,27 @@ def run_batch(input_dir_name, catalog_filename):
             "amount": metric.total_amount_eur,
         })
         
+    files_data = []
+    for file_result in batch_result.file_results:
+        file_routes = []
+        for key, metric in sorted(file_result.route_statistics.items()):
+            file_routes.append({
+                "departure": key.departure_country,
+                "arrival": key.arrival_country,
+                "transfers": metric.transfer_count,
+                "quantity": metric.total_quantity,
+                "amount": metric.total_amount_eur,
+            })
+        files_data.append({
+            "filename": file_result.report_path.name,
+            "total_rows": file_result.total_rows,
+            "fc_transfer_count": file_result.fc_transfer_count,
+            "fc_transfer_updated": file_result.fc_transfer_updated,
+            "total_value_added": file_result.total_value_added,
+            "missing_asins": file_result.missing_asins,
+            "routes": file_routes,
+        })
+
     return json.dumps({
         "mode": "batch",
         "files_count": batch_result.files_count,
@@ -239,7 +314,8 @@ def run_batch(input_dir_name, catalog_filename):
         "fc_transfer_updated": batch_result.grand_fc_updated,
         "total_value_added": batch_result.grand_value_added,
         "missing_asins": sorted(list(batch_result.all_missing_asins)),
-        "routes": routes,
+        "routes": consolidated_routes,
+        "files": files_data,
     })
 `;
 
@@ -285,7 +361,17 @@ def run_batch(input_dir_name, catalog_filename):
         }
         const processReportPyCode = await response.text();
 
-        pyodideInstance.FS.writeFile("process_report.py", processReportPyCode);
+        // Write package module into Pyodide virtual filesystem
+        pyodideInstance.FS.mkdirTree("/lib/python3.12/site-packages/amazon_vat_automation");
+        pyodideInstance.FS.writeFile(
+          "/lib/python3.12/site-packages/amazon_vat_automation/__init__.py",
+          "from .process_report import *"
+        );
+        pyodideInstance.FS.writeFile(
+          "/lib/python3.12/site-packages/amazon_vat_automation/process_report.py",
+          processReportPyCode
+        );
+
         pyodideInstance.runPython(pythonBridgeScript);
 
         engineStatus.className = "flex items-center space-x-2 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1.5 rounded-full font-medium";
@@ -337,7 +423,7 @@ def run_batch(input_dir_name, catalog_filename):
               for (const child of batch) {
                 await scanEntry(child);
               }
-              await readAllEntries(); // Continue reading batch until empty
+              await readAllEntries();
             }
           };
           await readAllEntries();
@@ -492,8 +578,14 @@ def run_batch(input_dir_name, catalog_filename):
           summaryJsonString = pyodideInstance.runPython(`run_batch("/batch_input", "/catalog.xlsx")`);
         }
 
-        const summary = JSON.parse(summaryJsonString);
-        renderResults(summary, isBatch);
+        currentProcessingResult = JSON.parse(summaryJsonString);
+        activeFileIndex = "all";
+        currentDepartureFilter = "ALL";
+        currentArrivalFilter = "ALL";
+        currentSearchText = "";
+
+        setupFileSwitcher(currentProcessingResult);
+        renderActiveView();
       } catch (err) {
         console.error("Processing error:", err);
         showError("Python Processing Error", err.message || "Execution failed", err.toString());
@@ -502,37 +594,207 @@ def run_batch(input_dir_name, catalog_filename):
       }
     }
 
-    function renderResults(summary, isBatch) {
+    function setupFileSwitcher(result) {
+      const switcherContainer = document.getElementById("file-switcher-container");
+      const fileSelect = document.getElementById("select-file-view");
+
+      if (result.mode !== "batch" || !result.files || result.files.length <= 1) {
+        switcherContainer.classList.add("hidden");
+        return;
+      }
+
+      switcherContainer.classList.remove("hidden");
+      fileSelect.innerHTML = "";
+
+      // Option for All Files
+      const allOption = document.createElement("option");
+      allOption.value = "all";
+      allOption.textContent = `📂 All Files (Consolidated - ${result.files.length} reports, €${result.total_value_added.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})})`;
+      fileSelect.appendChild(allOption);
+
+      // Options for each individual file
+      result.files.forEach((fileData, index) => {
+        const opt = document.createElement("option");
+        opt.value = String(index);
+        opt.textContent = `📄 ${fileData.filename} (${fileData.fc_transfer_updated} transfers, €${fileData.total_value_added.toFixed(2)})`;
+        fileSelect.appendChild(opt);
+      });
+
+      fileSelect.value = "all";
+      fileSelect.onchange = (e) => {
+        activeFileIndex = e.target.value;
+        currentDepartureFilter = "ALL";
+        currentArrivalFilter = "ALL";
+        currentSearchText = "";
+        document.getElementById("filter-search").value = "";
+        renderActiveView();
+      };
+    }
+
+    function getActiveDataset() {
+      if (!currentProcessingResult) return null;
+      if (currentProcessingResult.mode !== "batch" || activeFileIndex === "all") {
+        return {
+          title: currentProcessingResult.mode === "batch" ? "Consolidated All Files" : selectedReportFiles[0].name,
+          isBatch: currentProcessingResult.mode === "batch",
+          total_rows: currentProcessingResult.total_rows,
+          fc_transfer_updated: currentProcessingResult.fc_transfer_updated,
+          total_value_added: currentProcessingResult.total_value_added,
+          missing_asins: currentProcessingResult.missing_asins,
+          routes: currentProcessingResult.routes,
+          filename: currentProcessingResult.mode === "batch" ? null : selectedReportFiles[0].name,
+        };
+      }
+
+      const fileData = currentProcessingResult.files[parseInt(activeFileIndex, 10)];
+      return {
+        title: fileData.filename,
+        isBatch: false,
+        total_rows: fileData.total_rows,
+        fc_transfer_updated: fileData.fc_transfer_updated,
+        total_value_added: fileData.total_value_added,
+        missing_asins: fileData.missing_asins,
+        routes: fileData.routes,
+        filename: fileData.filename,
+      };
+    }
+
+    function renderActiveView() {
+      const data = getActiveDataset();
+      if (!data) return;
+
       document.getElementById("results-section").classList.remove("hidden");
-      document.getElementById("metric-total-rows").textContent = Number(summary.total_rows).toLocaleString();
-      document.getElementById("metric-fc-rows").textContent = Number(summary.fc_transfer_updated).toLocaleString();
-      document.getElementById("metric-value-added").textContent = `€${Number(summary.total_value_added).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-      document.getElementById("metric-missing-asins").textContent = summary.missing_asins.length;
+      
+      // Update Metrics Cards
+      document.getElementById("metric-total-rows").textContent = Number(data.total_rows).toLocaleString();
+      document.getElementById("metric-fc-rows").textContent = Number(data.fc_transfer_updated).toLocaleString();
+      document.getElementById("metric-value-added").textContent = `€${Number(data.total_value_added).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      document.getElementById("metric-missing-asins").textContent = data.missing_asins.length;
+
+      // Update Section Header Subtitle
+      const titleEl = document.getElementById("route-table-title");
+      const subtitleEl = document.getElementById("route-table-subtitle");
+      if (currentProcessingResult.mode === "batch") {
+        if (activeFileIndex === "all") {
+          titleEl.textContent = `Consolidated Summary (${currentProcessingResult.files_count} Reports)`;
+          subtitleEl.textContent = "Aggregated Departure Country × Arrival Country routes across all uploaded reports";
+        } else {
+          titleEl.textContent = `File Summary: ${data.title}`;
+          subtitleEl.textContent = `Departure Country × Arrival Country routes for ${data.title}`;
+        }
+      } else {
+        titleEl.textContent = `Departure Country × Arrival Country Summary`;
+        subtitleEl.textContent = `Cross-border transfer aggregation for FC_TRANSFER transactions`;
+      }
 
       // Missing ASINs Warning
       const warningBox = document.getElementById("warning-missing-asins");
       const listMissing = document.getElementById("list-missing-asins");
-      if (summary.missing_asins && summary.missing_asins.length > 0) {
+      if (data.missing_asins && data.missing_asins.length > 0) {
         warningBox.classList.remove("hidden");
-        listMissing.innerHTML = summary.missing_asins.map(asin => `<li>${asin}</li>`).join("");
+        listMissing.innerHTML = data.missing_asins.map(asin => `<li>${asin}</li>`).join("");
       } else {
         warningBox.classList.add("hidden");
       }
 
-      // Render Routes Table
+      // Populate Filter Select Dropdowns with options from current dataset
+      populateCountryFilterOptions(data.routes);
+
+      // Render Filtered Routes Table & Live Totals
+      renderFilteredTable(data.routes);
+
+      // Render Download Buttons
+      renderDownloadButtons();
+    }
+
+    function populateCountryFilterOptions(routes) {
+      const depSelect = document.getElementById("filter-departure");
+      const arrSelect = document.getElementById("filter-arrival");
+
+      const uniqueDeps = Array.from(new Set(routes.map(r => r.departure))).sort();
+      const uniqueArrs = Array.from(new Set(routes.map(r => r.arrival))).sort();
+
+      // Preserve existing selections if still valid
+      const prevDep = depSelect.value;
+      const prevArr = arrSelect.value;
+
+      depSelect.innerHTML = '<option value="ALL">All Departures</option>';
+      uniqueDeps.forEach(dep => {
+        const opt = document.createElement("option");
+        opt.value = dep;
+        opt.textContent = dep;
+        depSelect.appendChild(opt);
+      });
+      depSelect.value = uniqueDeps.includes(prevDep) ? prevDep : "ALL";
+      currentDepartureFilter = depSelect.value;
+
+      arrSelect.innerHTML = '<option value="ALL">All Arrivals</option>';
+      uniqueArrs.forEach(arr => {
+        const opt = document.createElement("option");
+        opt.value = arr;
+        opt.textContent = arr;
+        arrSelect.appendChild(opt);
+      });
+      arrSelect.value = uniqueArrs.includes(prevArr) ? prevArr : "ALL";
+      currentArrivalFilter = arrSelect.value;
+    }
+
+    function renderFilteredTable(routes) {
       const tbody = document.getElementById("table-routes-body");
+      const tfoot = document.getElementById("table-routes-foot");
+      const countStatus = document.getElementById("filter-status-count");
+      const btnReset = document.getElementById("btn-reset-filters");
+
+      // Filter routes
+      const searchLower = currentSearchText.trim().toLowerCase();
+      const isFiltering = currentDepartureFilter !== "ALL" || currentArrivalFilter !== "ALL" || searchLower !== "";
+
+      if (isFiltering) {
+        btnReset.classList.remove("hidden");
+      } else {
+        btnReset.classList.add("hidden");
+      }
+
+      const filteredRoutes = routes.filter(r => {
+        if (currentDepartureFilter !== "ALL" && r.departure !== currentDepartureFilter) return false;
+        if (currentArrivalFilter !== "ALL" && r.arrival !== currentArrivalFilter) return false;
+        if (searchLower) {
+          const matchDep = r.departure.toLowerCase().includes(searchLower);
+          const matchArr = r.arrival.toLowerCase().includes(searchLower);
+          const matchRoute = `${r.departure} -> ${r.arrival}`.toLowerCase().includes(searchLower);
+          if (!matchDep && !matchArr && !matchRoute) return false;
+        }
+        return true;
+      });
+
+      countStatus.textContent = isFiltering 
+        ? `Showing ${filteredRoutes.length} of ${routes.length} routes`
+        : `${routes.length} routes total`;
+
+      if (filteredRoutes.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="px-5 py-8 text-center text-slate-400 font-sans text-xs">
+              No routes match the selected country filter (${currentDepartureFilter} → ${currentArrivalFilter}).
+            </td>
+          </tr>
+        `;
+        tfoot.innerHTML = "";
+        return;
+      }
+
       let grandTransfers = 0;
       let grandQty = 0;
       let grandAmount = 0;
 
-      const rowsHtml = summary.routes.map(r => {
+      const rowsHtml = filteredRoutes.map(r => {
         grandTransfers += r.transfers;
         grandQty += r.quantity;
         grandAmount += r.amount;
 
         const qtyFormatted = Number.isInteger(r.quantity) ? r.quantity : r.quantity.toFixed(2);
         return `
-          <tr class="hover:bg-slate-50">
+          <tr class="hover:bg-slate-50 transition-colors">
             <td class="px-5 py-2.5 font-bold text-slate-800">${r.departure}</td>
             <td class="px-5 py-2.5 font-bold text-slate-800">${r.arrival}</td>
             <td class="px-5 py-2.5 text-right font-mono text-slate-600">${r.transfers.toLocaleString()}</td>
@@ -542,26 +804,58 @@ def run_batch(input_dir_name, catalog_filename):
         `;
       }).join("");
 
-      const totalRowHtml = `
-        <tr class="bg-slate-100 font-bold border-t-2 border-slate-300">
-          <td class="px-5 py-3 text-slate-900" colspan="2">TOTAL</td>
+      tbody.innerHTML = rowsHtml;
+
+      const totalLabel = isFiltering ? "FILTERED TOTAL" : "TOTAL";
+      tfoot.innerHTML = `
+        <tr>
+          <td class="px-5 py-3 text-slate-900" colspan="2">${totalLabel}</td>
           <td class="px-5 py-3 text-right font-mono text-slate-900">${grandTransfers.toLocaleString()}</td>
           <td class="px-5 py-3 text-right font-mono text-slate-900">${Number.isInteger(grandQty) ? grandQty : grandQty.toFixed(2)}</td>
           <td class="px-5 py-3 text-right font-mono text-blue-600 text-sm">€${grandAmount.toFixed(2)}</td>
         </tr>
       `;
-
-      tbody.innerHTML = rowsHtml + totalRowHtml;
-
-      // Render Download Buttons
-      renderDownloadButtons(isBatch);
     }
 
-    function renderDownloadButtons(isBatch) {
+    // Filter Event Listeners
+    document.getElementById("filter-departure").addEventListener("change", (e) => {
+      currentDepartureFilter = e.target.value;
+      const data = getActiveDataset();
+      if (data) renderFilteredTable(data.routes);
+    });
+
+    document.getElementById("filter-arrival").addEventListener("change", (e) => {
+      currentArrivalFilter = e.target.value;
+      const data = getActiveDataset();
+      if (data) renderFilteredTable(data.routes);
+    });
+
+    document.getElementById("filter-search").addEventListener("input", (e) => {
+      currentSearchText = e.target.value;
+      const data = getActiveDataset();
+      if (data) renderFilteredTable(data.routes);
+    });
+
+    document.getElementById("btn-reset-filters").addEventListener("click", () => {
+      currentDepartureFilter = "ALL";
+      currentArrivalFilter = "ALL";
+      currentSearchText = "";
+      document.getElementById("filter-departure").value = "ALL";
+      document.getElementById("filter-arrival").value = "ALL";
+      document.getElementById("filter-search").value = "";
+      const data = getActiveDataset();
+      if (data) renderFilteredTable(data.routes);
+    });
+
+    function renderDownloadButtons() {
       const container = document.getElementById("download-buttons-container");
       container.innerHTML = "";
+      if (!currentProcessingResult) return;
+
+      const isBatch = currentProcessingResult.mode === "batch";
 
       if (!isBatch) {
+        // Single File Mode Downloads
         const btnProcessed = document.createElement("button");
         btnProcessed.className = "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
         btnProcessed.textContent = "⬇ Download Processed CSV";
@@ -581,32 +875,81 @@ def run_batch(input_dir_name, catalog_filename):
         container.appendChild(btnProcessed);
         container.appendChild(btnSummary);
       } else {
-        const btnZip = document.createElement("button");
-        btnZip.className = "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition";
-        btnZip.textContent = "⬇ Download Batch Archive (.zip)";
-        btnZip.onclick = async () => {
-          const zip = new JSZip();
-          for (const file of selectedReportFiles) {
-            try {
-              const processedContent = pyodideInstance.FS.readFile(`/batch_input/processed/${file.name}`);
-              zip.file(`processed_${file.name}`, processedContent);
-            } catch (e) {}
-          }
-          try {
-            const batchSummaryContent = pyodideInstance.FS.readFile("/batch_input/processed/batch_country_summary.csv");
-            zip.file("batch_country_summary.csv", batchSummaryContent);
-          } catch (e) {}
+        // Batch Mode Downloads
+        if (activeFileIndex === "all") {
+          const btnZip = document.createElement("button");
+          btnZip.className = "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition";
+          btnZip.textContent = `⬇ Download Batch Archive (${currentProcessingResult.files_count} CSVs in .zip)`;
+          btnZip.onclick = async () => downloadBatchZip();
 
-          const zipBlob = await zip.generateAsync({ type: "blob" });
-          const url = URL.createObjectURL(zipBlob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "batch_processed_reports.zip";
-          a.click();
-          URL.revokeObjectURL(url);
-        };
-        container.appendChild(btnZip);
+          const btnBatchSummary = document.createElement("button");
+          btnBatchSummary.className = "bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
+          btnBatchSummary.textContent = "⬇ Download Consolidated Summary CSV";
+          btnBatchSummary.onclick = () => {
+            const content = pyodideInstance.FS.readFile("/batch_input/processed/batch_country_summary.csv");
+            downloadBlob(content, "batch_country_summary.csv", "text/csv;charset=utf-8");
+          };
+
+          container.appendChild(btnZip);
+          container.appendChild(btnBatchSummary);
+        } else {
+          // Specific File Selected in Batch View
+          const fileData = currentProcessingResult.files[parseInt(activeFileIndex, 10)];
+          const baseName = fileData.filename.replace(/\.[^/.]+$/, "");
+
+          const btnProcessedFile = document.createElement("button");
+          btnProcessedFile.className = "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
+          btnProcessedFile.textContent = `⬇ Download ${fileData.filename}`;
+          btnProcessedFile.onclick = () => {
+            const content = pyodideInstance.FS.readFile(`/batch_input/processed/${fileData.filename}`);
+            downloadBlob(content, `processed_${fileData.filename}`, "text/csv;charset=utf-8");
+          };
+
+          const btnSummaryFile = document.createElement("button");
+          btnSummaryFile.className = "bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
+          btnSummaryFile.textContent = `⬇ Download ${baseName} Summary`;
+          btnSummaryFile.onclick = () => {
+            const content = pyodideInstance.FS.readFile(`/batch_input/processed/${baseName}_country_summary.csv`);
+            downloadBlob(content, `${baseName}_country_summary.csv`, "text/csv;charset=utf-8");
+          };
+
+          const btnZip = document.createElement("button");
+          btnZip.className = "bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition border border-slate-300";
+          btnZip.textContent = "📦 Download All (.zip)";
+          btnZip.onclick = async () => downloadBatchZip();
+
+          container.appendChild(btnProcessedFile);
+          container.appendChild(btnSummaryFile);
+          container.appendChild(btnZip);
+        }
       }
+    }
+
+    async function downloadBatchZip() {
+      const zip = new JSZip();
+      for (const file of selectedReportFiles) {
+        try {
+          const processedContent = pyodideInstance.FS.readFile(`/batch_input/processed/${file.name}`);
+          zip.file(`processed_${file.name}`, processedContent);
+        } catch (e) {}
+        try {
+          const baseName = file.name.replace(/\.[^/.]+$/, "");
+          const summaryContent = pyodideInstance.FS.readFile(`/batch_input/processed/${baseName}_country_summary.csv`);
+          zip.file(`${baseName}_country_summary.csv`, summaryContent);
+        } catch (e) {}
+      }
+      try {
+        const batchSummaryContent = pyodideInstance.FS.readFile("/batch_input/processed/batch_country_summary.csv");
+        zip.file("batch_country_summary.csv", batchSummaryContent);
+      } catch (e) {}
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "batch_processed_reports.zip";
+      a.click();
+      URL.revokeObjectURL(url);
     }
 
     function downloadBlob(data, filename, mimeType) {
