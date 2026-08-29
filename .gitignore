@@ -30,3 +30,5 @@ processed/
 example_data/*_processed.csv
 example_data/*_country_summary.csv
 example_data/processed/
+
+uv.lock

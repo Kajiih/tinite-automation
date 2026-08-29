@@ -1,4 +1,4 @@
-# Amazon Automation Tools Monorepo
+# Tinite Automation
 
 A production-grade Python monorepo using **Astral `uv` Workspaces** with clean **`apps/` + `libs/`** domain separation.
 
@@ -9,7 +9,7 @@ Includes full client-side WebAssembly execution in the browser (Pyodide) and hig
 ## Workspace Architecture
 
 ```
-amazon-automation-monorepo/
+tinite-automation/
 ├── pyproject.toml                  # Root workspace manifest
 ├── uv.lock                         # Universal workspace lockfile
 ├── README.md

@@ -1,7 +1,7 @@
 [project]
-name = "amazon-automation-monorepo"
+name = "tinite-automation"
 version = "0.2.0"
-description = "Amazon VAT Transaction Reporting and ASIN Asset Automation Monorepo"
+description = "Tinite Automation - Amazon VAT Transaction Reporting and ASIN Asset Automation Monorepo"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

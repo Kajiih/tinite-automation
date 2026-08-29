@@ -20,7 +20,7 @@ from pathlib import Path
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-GITHUB_REPO_ARCHIVE_URL: str = "https://github.com/paquerot/alex_automation/archive/refs/heads/main.zip"
+GITHUB_REPO_ARCHIVE_URL: str = "https://github.com/Kajiih/tinite-automation/archive/refs/heads/main.zip"
 
 
 @dataclass(slots=True)
