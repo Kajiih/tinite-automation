@@ -1,5 +1,4 @@
-"""
-Amazon VAT Transaction Report - FC_Transfer Price Automation
+"""Amazon VAT Transaction Report - FC_Transfer Price Automation.
 
 Production-grade automation to populate unit cost (Column T: COST_PRICE_OF_ITEMS)
 and line total (Column U: PRICE_OF_ITEMS_AMT_VAT_EXCL) for FC_TRANSFER rows in
@@ -16,16 +15,21 @@ import csv
 import logging
 import sys
 from collections import defaultdict
-from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence, Set
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence
+    from collections.abc import Set as AbstractSet
 
 logger: logging.Logger = logging.getLogger(__name__)
 
 
 class TransactionType(StrEnum):
     """Supported transaction types in Amazon VAT transaction reports."""
+
     FC_TRANSFER = "FC_TRANSFER"
     SALE = "SALE"
     REFUND = "REFUND"
@@ -34,6 +38,7 @@ class TransactionType(StrEnum):
 
 class ColumnHeader(StrEnum):
     """Standard column header names in Amazon VAT transaction reports."""
+
     TRANSACTION_TYPE = "TRANSACTION_TYPE"
     ASIN = "ASIN"
     QUANTITY = "QTY"
@@ -53,6 +58,7 @@ CSV_LINE_TERMINATOR: str = "\r\n"
 @dataclass(frozen=True, order=True, slots=True)
 class RouteKey:
     """Represents a cross-border transfer route (Departure Country -> Arrival Country)."""
+
     departure_country: str
     arrival_country: str
 
@@ -63,6 +69,7 @@ class RouteKey:
 @dataclass(slots=True)
 class RouteMetric:
     """Accumulator for cross-border transfer statistics along a specific route."""
+
     transfer_count: int = 0
     total_quantity: float = 0.0
     total_amount_eur: float = 0.0
@@ -83,6 +90,7 @@ class RouteMetric:
 @dataclass(slots=True)
 class FileProcessingResult:
     """Detailed summary statistics for a single processed VAT report."""
+
     report_path: Path
     output_path: Path
     summary_path: Path | None
@@ -98,6 +106,7 @@ class FileProcessingResult:
 @dataclass(slots=True)
 class BatchProcessingResult:
     """Consolidated summary statistics for an entire batch of processed VAT reports."""
+
     input_directory: Path
     output_directory: Path
     batch_summary_path: Path
@@ -109,23 +118,23 @@ class BatchProcessingResult:
     grand_fc_transfers: int = 0
     grand_fc_updated: int = 0
     grand_value_added: float = 0.0
-    all_missing_asins: Set[str] = field(default_factory=set)
+    all_missing_asins: AbstractSet[str] = field(default_factory=set)
     consolidated_routes: MutableMapping[RouteKey, RouteMetric] = field(
         default_factory=lambda: defaultdict(RouteMetric)
     )
 
 
 def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
-    """
-    Load ASIN -> unit price mapping from an Excel catalog (.xlsx).
-    
+    """Load ASIN -> unit price mapping from an Excel catalog (.xlsx).
+
     Dynamically scans worksheets to locate the ASIN and unit price columns,
     robustly parsing numbers with commas, periods, and currency symbols.
     """
     import openpyxl
 
     if not price_catalog_path.exists():
-        raise FileNotFoundError(f"Excel price catalog file not found at: {price_catalog_path}")
+        msg = f"Excel price catalog file not found at: {price_catalog_path}"
+        raise FileNotFoundError(msg)
 
     logger.info("Loading price catalog from: %s", price_catalog_path)
     workbook = openpyxl.load_workbook(filename=price_catalog_path, data_only=True, read_only=True)
@@ -160,10 +169,13 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
     if target_worksheet is None:
         target_worksheet = workbook.active
         if target_worksheet is None:
-            raise ValueError(f"No readable worksheets found in Excel file: {price_catalog_path}")
+            msg = f"No readable worksheets found in Excel file: {price_catalog_path}"
+            raise ValueError(msg)
 
     price_catalog: MutableMapping[str, float] = {}
-    for row_index, row_values in enumerate(target_worksheet.iter_rows(min_row=2, values_only=True), start=2):
+    for row_index, row_values in enumerate(
+        target_worksheet.iter_rows(min_row=2, values_only=True), start=2
+    ):
         if not row_values or len(row_values) <= asin_column_index:
             continue
 
@@ -205,7 +217,8 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
 
     workbook.close()
     if not price_catalog:
-        raise ValueError(f"No valid ASIN price entries were extracted from: {price_catalog_path}")
+        msg = f"No valid ASIN price entries were extracted from: {price_catalog_path}"
+        raise ValueError(msg)
 
     logger.info("Successfully loaded %d ASINs from price catalog.", len(price_catalog))
     return price_catalog
@@ -259,11 +272,15 @@ def export_country_summary(
         f"{total_accumulator.total_amount_eur:.2f}",
     ])
 
-    with open(output_csv_path, mode="w", encoding=DEFAULT_ENCODING, newline="") as file_handle:
+    with output_csv_path.open(mode="w", encoding=DEFAULT_ENCODING, newline="") as file_handle:
         writer = csv.writer(file_handle, quoting=csv.QUOTE_ALL, lineterminator=CSV_LINE_TERMINATOR)
         writer.writerows(output_rows)
 
-    logger.info("Exported country route summary with %d routes to: %s", len(route_statistics), output_csv_path)
+    logger.info(
+        "Exported country route summary with %d routes to: %s",
+        len(route_statistics),
+        output_csv_path,
+    )
 
 
 def format_route_table(route_statistics: Mapping[RouteKey, RouteMetric]) -> str:
@@ -287,7 +304,7 @@ def format_route_table(route_statistics: Mapping[RouteKey, RouteMetric]) -> str:
             else f"{metric.total_quantity:,.2f}"
         )
         table_lines.append(
-            f"  {str(route_key):<26} | {metric.transfer_count:<10,d} | {quantity_string:<12} | €{metric.total_amount_eur:<14,.2f}"
+            f"  {route_key!s:<26} | {metric.transfer_count:<10,d} | {quantity_string:<12} | €{metric.total_amount_eur:<14,.2f}"
         )
 
     table_lines.append("  " + "-" * 70)
@@ -309,24 +326,25 @@ def process_vat_report(
     output_path: Path,
     export_summary: bool = True,
 ) -> FileProcessingResult:
-    """
-    Process a single Amazon VAT CSV report using a pre-loaded price catalog.
-    
+    """Process a single Amazon VAT CSV report using a pre-loaded price catalog.
+
     Populates Column T (unit price) and Column U (unit price * quantity) for FC_TRANSFER rows.
     Leaves Columns W and AD empty for FC_TRANSFER rows.
     """
     if not report_path.exists():
-        raise FileNotFoundError(f"VAT report file not found at: {report_path}")
+        msg = f"VAT report file not found at: {report_path}"
+        raise FileNotFoundError(msg)
 
     logger.info("Processing VAT report: %s", report_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(report_path, mode="r", encoding=DEFAULT_ENCODING, newline="") as infile:
+    with report_path.open(encoding=DEFAULT_ENCODING, newline="") as infile:
         reader = csv.reader(infile)
         try:
             header = next(reader)
         except StopIteration:
-            raise ValueError(f"VAT report file is empty: {report_path}")
+            msg = f"VAT report file is empty: {report_path}"
+            raise ValueError(msg)
 
         column_indices: Mapping[str, int] = {
             column_name.strip(): index for index, column_name in enumerate(header)
@@ -346,16 +364,22 @@ def process_vat_report(
         index_asin = resolve_column_index(ColumnHeader.ASIN, 13)
         index_quantity = resolve_column_index(ColumnHeader.QUANTITY, 16)
         index_cost_price = resolve_column_index(ColumnHeader.COST_PRICE_OF_ITEMS, 19)
-        index_item_price_vat_excl = resolve_column_index(ColumnHeader.PRICE_OF_ITEMS_AMT_VAT_EXCL, 20)
-        index_total_price_vat_excl = resolve_column_index(ColumnHeader.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL, 22)
-        index_total_activity_vat_excl = resolve_column_index(ColumnHeader.TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL, 29)
+        index_item_price_vat_excl = resolve_column_index(
+            ColumnHeader.PRICE_OF_ITEMS_AMT_VAT_EXCL, 20
+        )
+        index_total_price_vat_excl = resolve_column_index(
+            ColumnHeader.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL, 22
+        )
+        index_total_activity_vat_excl = resolve_column_index(
+            ColumnHeader.TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL, 29
+        )
         index_departure_country = resolve_column_index(ColumnHeader.DEPARTURE_COUNTRY, 62)
         index_arrival_country = resolve_column_index(ColumnHeader.ARRIVAL_COUNTRY, 65)
 
         total_rows: int = 0
         fc_transfer_count: int = 0
         fc_transfer_updated: int = 0
-        missing_asins: Set[str] = set()
+        missing_asins: AbstractSet[str] = set()
         missing_rows_count: int = 0
         total_value_added: float = 0.0
 
@@ -398,9 +422,7 @@ def process_vat_report(
                 route_key = RouteKey(departure_country, arrival_country)
 
                 try:
-                    quantity = (
-                        float(raw_quantity.replace(",", ".")) if raw_quantity else 1.0
-                    )
+                    quantity = float(raw_quantity.replace(",", ".")) if raw_quantity else 1.0
                 except ValueError:
                     quantity = 1.0
 
@@ -418,7 +440,9 @@ def process_vat_report(
 
                     fc_transfer_updated += 1
                     total_value_added = round(total_value_added + total_price, 2)
-                    route_statistics[route_key].add_transfer(quantity=quantity, amount_eur=total_price)
+                    route_statistics[route_key].add_transfer(
+                        quantity=quantity, amount_eur=total_price
+                    )
                 else:
                     missing_asins.add(asin)
                     missing_rows_count += 1
@@ -426,7 +450,7 @@ def process_vat_report(
 
             output_rows.append(row_cells)
 
-    with open(output_path, mode="w", encoding=DEFAULT_ENCODING, newline="") as outfile:
+    with output_path.open(mode="w", encoding=DEFAULT_ENCODING, newline="") as outfile:
         writer = csv.writer(outfile, quoting=csv.QUOTE_ALL, lineterminator=CSV_LINE_TERMINATOR)
         writer.writerows(output_rows)
 
@@ -462,15 +486,15 @@ def process_batch(
     price_catalog_path: Path,
     output_directory: Path | None = None,
 ) -> BatchProcessingResult:
-    """
-    Process all VAT reports in a folder in batch mode.
-    
+    """Process all VAT reports in a folder in batch mode.
+
     Generates individual filled reports, route summaries, and a consolidated batch summary.
     """
     if not input_directory.is_dir():
-        raise NotADirectoryError(f"Input path is not a directory: {input_directory}")
+        msg = f"Input path is not a directory: {input_directory}"
+        raise NotADirectoryError(msg)
 
-    target_output_directory = output_directory if output_directory else input_directory / "processed"
+    target_output_directory = output_directory or input_directory / "processed"
     target_output_directory.mkdir(parents=True, exist_ok=True)
 
     report_files: MutableSequence[Path] = [
@@ -483,7 +507,8 @@ def process_batch(
     ]
 
     if not report_files:
-        raise FileNotFoundError(f"No .csv files found in directory: {input_directory}")
+        msg = f"No .csv files found in directory: {input_directory}"
+        raise FileNotFoundError(msg)
 
     report_files.sort()
     logger.info("Starting batch processing of %d files in: %s", len(report_files), input_directory)
@@ -503,13 +528,17 @@ def process_batch(
     mutable_file_results: MutableSequence[FileProcessingResult] = []
     for report_file in report_files:
         output_file = target_output_directory / report_file.name
-        file_result = process_vat_report(report_file, price_catalog, output_file, export_summary=True)
+        file_result = process_vat_report(
+            report_file, price_catalog, output_file, export_summary=True
+        )
         mutable_file_results.append(file_result)
 
         batch_result.grand_total_rows += file_result.total_rows
         batch_result.grand_fc_transfers += file_result.fc_transfer_count
         batch_result.grand_fc_updated += file_result.fc_transfer_updated
-        batch_result.grand_value_added = round(batch_result.grand_value_added + file_result.total_value_added, 2)
+        batch_result.grand_value_added = round(
+            batch_result.grand_value_added + file_result.total_value_added, 2
+        )
         batch_result.all_missing_asins.update(file_result.missing_asins)
 
         for route_key, metric in file_result.route_statistics.items():
@@ -521,7 +550,9 @@ def process_batch(
     return batch_result
 
 
-def print_single_summary(result: FileProcessingResult, catalog_size: int, price_catalog_path: Path) -> None:
+def print_single_summary(
+    result: FileProcessingResult, catalog_size: int, price_catalog_path: Path
+) -> None:
     """Display single-file execution summary and country route breakdown."""
     print("\n" + "=" * 74)
     print("  AMAZON VAT REPORT PROCESSING COMPLETE")
@@ -546,7 +577,7 @@ def print_single_summary(result: FileProcessingResult, catalog_size: int, price_
             print(f"    - {asin}")
         print("  (These rows were left with empty price columns)")
     else:
-        print(f"  Missing ASINs:      0 (100% matched)")
+        print("  Missing ASINs:      0 (100% matched)")
 
     print("-" * 74)
     print("  DEPARTURE COUNTRY x ARRIVAL COUNTRY SUMMARY (FC_TRANSFER):")
@@ -577,7 +608,7 @@ def print_batch_summary(result: BatchProcessingResult) -> None:
         )
 
     print("-" * 74)
-    print(f"  GRAND TOTALS:")
+    print("  GRAND TOTALS:")
     print(f"    Total Rows:       {result.grand_total_rows:,}")
     print(f"    FC_TRANSFER Rows: {result.grand_fc_transfers:,}")
     print(f"    Filled Rows:      {result.grand_fc_updated:,}")
@@ -590,7 +621,7 @@ def print_batch_summary(result: BatchProcessingResult) -> None:
             print(f"    - {asin}")
         print("  (Unmatched rows were left with empty price columns)")
     else:
-        print(f"    Missing ASINs:    0 (100% matched)")
+        print("    Missing ASINs:    0 (100% matched)")
 
     print("-" * 74)
     print("  CONSOLIDATED DEPARTURE x ARRIVAL SUMMARY (ALL FILES):")
@@ -649,7 +680,9 @@ def main() -> None:
     args = parser.parse_args()
 
     input_path = args.input_path.expanduser().resolve() if args.input_path else None
-    price_catalog_path = args.price_catalog_path.expanduser().resolve() if args.price_catalog_path else None
+    price_catalog_path = (
+        args.price_catalog_path.expanduser().resolve() if args.price_catalog_path else None
+    )
     output_path = args.output_path.expanduser().resolve() if args.output_path else None
 
     # Interactive prompts if paths are missing
@@ -660,9 +693,13 @@ def main() -> None:
         print(" Tip: You can drag and drop a file or folder into this window.\n")
 
         if not input_path:
-            input_path = prompt_for_path("1. Enter or Drag & Drop the VAT report CSV file or folder with reports")
+            input_path = prompt_for_path(
+                "1. Enter or Drag & Drop the VAT report CSV file or folder with reports"
+            )
         if not price_catalog_path:
-            price_catalog_path = prompt_for_path("2. Enter or Drag & Drop the Excel price catalog (.xlsx)")
+            price_catalog_path = prompt_for_path(
+                "2. Enter or Drag & Drop the Excel price catalog (.xlsx)"
+            )
 
     try:
         if input_path.is_dir():
@@ -674,9 +711,13 @@ def main() -> None:
             print_batch_summary(batch_result)
         else:
             price_catalog = load_price_catalog(price_catalog_path)
-            default_output_path = input_path.parent / f"{input_path.stem}_processed{input_path.suffix}"
-            target_output_path = output_path if output_path else default_output_path
-            file_result = process_vat_report(input_path, price_catalog, target_output_path, export_summary=True)
+            default_output_path = (
+                input_path.parent / f"{input_path.stem}_processed{input_path.suffix}"
+            )
+            target_output_path = output_path or default_output_path
+            file_result = process_vat_report(
+                input_path, price_catalog, target_output_path, export_summary=True
+            )
             print_single_summary(file_result, len(price_catalog), price_catalog_path)
     except Exception:
         logger.exception("Operation failed")

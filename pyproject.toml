@@ -12,7 +12,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "poethepoet>=0.48.0",
     "pytest>=8.0.0",
+    "ruff>=0.16.5",
+    "ty>=0.0.75",
 ]
 
 [tool.uv.workspace]
@@ -40,3 +43,62 @@ pythonpath = [
 
 [tool.uv]
 index-url = "https://pypi.org/simple"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+fix = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+preview = true
+pydocstyle.convention = "google"
+
+ignore = [
+    "CPY",                    # Missing copyright header
+    "missing-trailing-comma",                 # Trailing comma (conflicts with formatter)
+    "undocumented-public-init",                   # __init__ missing docstring
+    "missing-todo-author",                  # Missing author in TODO
+    "line-contains-todo",                 # Line contains TODO
+    "TD",                     # Todo formatting
+    "undocumented-public-module",                   # Missing docstring in public module
+    "undocumented-public-package",                   # Missing docstring in public package
+    "implicit-namespace-package",                 # Implicit namespace package
+    "print",                   # print found
+]
+per-file-ignores = { "**/tests/**/*.py" = ["S101", "PLR2004", "D101", "D102", "D103", "ANN201", "ANN001", "ARG002"] }
+future-annotations = true
+
+[tool.ruff.lint.flake8-annotations]
+mypy-init-return = true
+
+[tool.ruff.lint.pylint]
+max-args = 10
+max-positional-args = 5
+
+[tool.ruff.lint.pydoclint]
+ignore-one-line-docstrings = true
+
+[tool.ruff.lint.flake8-type-checking]
+strict = true
+
+[tool.ruff.format]
+docstring-code-format = true
+preview = true
+
+[tool.ty.src]
+exclude = ["**/.archive/**", "scratch/**"]
+
+[tool.ty.rules]
+all = "error"
+
+[tool.poe.tasks]
+check-ruff = "ruff check ."
+check-format = "ruff format --check ."
+check-ty = "ty check"
+check-all = ["check-ty", "check-ruff", "check-format"]
+format-ruff = "ruff format ."
+fix-ruff = "ruff check --fix --unsafe-fixes ."
+format = ["format-ruff", "fix-ruff"]
+test = "pytest"
+all = ["format", "check-all", "test"]

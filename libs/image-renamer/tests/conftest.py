@@ -1,14 +1,15 @@
-"""
-Shared Pytest Fixtures and Factories for ASIN Image Duplicator Tests
-"""
+"""Shared Pytest Fixtures and Factories for ASIN Image Duplicator Tests."""
 
 from __future__ import annotations
 
 import csv
-import io
-from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 PACKAGE_DIR: Path = Path(__file__).resolve().parent.parent
 
@@ -36,24 +37,24 @@ def sample_template_images_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_asin_file_factory(tmp_path: Path) -> Callable[[Sequence[str], str], Path]:
-    """
-    Factory fixture to create sample ASIN files in .txt, .csv, or .xlsx format.
-    """
+    """Factory fixture to create sample ASIN files in .txt, .csv, or .xlsx format."""
+
     def _create_file(asins: Sequence[str], file_type: str = "txt") -> Path:
         if file_type == "txt":
             path = tmp_path / "asins.txt"
             path.write_text("\n".join(asins), encoding="utf-8-sig")
             return path
-        elif file_type == "csv":
+        if file_type == "csv":
             path = tmp_path / "asins.csv"
-            with open(path, mode="w", encoding="utf-8-sig", newline="") as f:
+            with path.open(mode="w", encoding="utf-8-sig", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["Product Title", "ASIN", "Category"])
                 for idx, asin in enumerate(asins, 1):
                     writer.writerow([f"Product {idx}", asin, "Electronics"])
             return path
-        elif file_type == "xlsx":
+        if file_type == "xlsx":
             import openpyxl
+
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.append(["Title", "ASIN", "Price"])
@@ -63,7 +64,7 @@ def fake_asin_file_factory(tmp_path: Path) -> Callable[[Sequence[str], str], Pat
             wb.save(path)
             wb.close()
             return path
-        else:
-            raise ValueError(f"Unsupported test file type: {file_type}")
+        msg = f"Unsupported test file type: {file_type}"
+        raise ValueError(msg)
 
     return _create_file

@@ -1,23 +1,25 @@
-"""
-End-to-End User Workflow & WebAssembly Bridge Contract Tests
-"""
+"""End-to-End User Workflow & WebAssembly Bridge Contract Tests."""
 
-from __future__ import annotations
-
+import importlib.resources
 import importlib.util
 import json
 from pathlib import Path
+
 import pytest
 
 # Dynamically import bridge module
-BRIDGE_FILE: Path = Path(__file__).resolve().parent.parent / "static" / "py" / "bridge.py"
+BRIDGE_FILE: Path = Path(importlib.resources.files("web_server") / "static" / "py" / "bridge.py")
 spec = importlib.util.spec_from_file_location("bridge", BRIDGE_FILE)
 bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[3]
-SAMPLE_REPORT_PATH: Path = REPO_ROOT / "libs" / "vat-report" / "example_data" / "sample_vat_report.csv"
-PRICE_CATALOG_PATH: Path = REPO_ROOT / "libs" / "vat-report" / "example_data" / "amazon_asin_prix_achat_cogs_maj.xlsx"
+SAMPLE_REPORT_PATH: Path = (
+    REPO_ROOT / "libs" / "vat-report" / "example_data" / "sample_vat_report.csv"
+)
+PRICE_CATALOG_PATH: Path = (
+    REPO_ROOT / "libs" / "vat-report" / "example_data" / "amazon_asin_prix_achat_cogs_maj.xlsx"
+)
 
 
 class TestVatReportWebWorkflows:
@@ -32,7 +34,7 @@ class TestVatReportWebWorkflows:
         catalog.write_bytes(PRICE_CATALOG_PATH.read_bytes())
         return report, catalog
 
-    def test_single_vat_report_web_workflow(self, prepared_inputs):
+    def test_single_vat_report_web_workflow(self, prepared_inputs) -> None:
         """Verify single VAT report WebAssembly execution returns complete valid JSON payload."""
         report_file, catalog_file = prepared_inputs
         data = json.loads(bridge.run_vat_single(str(report_file), str(catalog_file)))
@@ -48,7 +50,7 @@ class TestVatReportWebWorkflows:
         }
         assert len(routes) == 14
 
-    def test_batch_vat_report_web_workflow(self, tmp_path: Path):
+    def test_batch_vat_report_web_workflow(self, tmp_path: Path) -> None:
         """Verify batch VAT reports WebAssembly execution returns consolidated JSON payload."""
         batch_dir = tmp_path / "batch_reports"
         batch_dir.mkdir()
@@ -81,15 +83,18 @@ class TestImageDuplicatorWebWorkflows:
     @pytest.mark.parametrize(
         ("raw_input", "expected_asins"),
         [
-            ("b089wjc6z4, B089N1ND4V\nB089WJC6Z4\nB07XYZ1234", ["B089WJC6Z4", "B089N1ND4V", "B07XYZ1234"]),
+            (
+                "b089wjc6z4, B089N1ND4V\nB089WJC6Z4\nB07XYZ1234",
+                ["B089WJC6Z4", "B089N1ND4V", "B07XYZ1234"],
+            ),
             ("B011111111; B022222222\nB033333333", ["B011111111", "B022222222", "B033333333"]),
         ],
     )
-    def test_parse_asins_web_workflow(self, raw_input: str, expected_asins: list[str]):
+    def test_parse_asins_web_workflow(self, raw_input: str, expected_asins: list[str]) -> None:
         """Verify ASIN string parsing and deduplication returns clean JSON array."""
         assert json.loads(bridge.run_parse_asins(raw_input)) == expected_asins
 
-    def test_generate_image_manifest_web_workflow(self):
+    def test_generate_image_manifest_web_workflow(self) -> None:
         """Verify image manifest generation returns structured JSON tree."""
         image_names = json.dumps(["MAIN.jpg", "PT01.png"])
         asins = json.dumps(["B089WJC6Z4", "B089N1ND4V"])

@@ -56,6 +56,7 @@ document.getElementById("btn-update-app")?.addEventListener("click", async () =>
   if (!btn || !btnText) return;
 
   btn.disabled = true;
+  btn.classList.remove("animate-pulse");
   btn.classList.add("opacity-75");
   btnText.textContent = "Updating...";
 
@@ -67,8 +68,10 @@ document.getElementById("btn-update-app")?.addEventListener("click", async () =>
     const data = await res.json();
     if (data.success) {
       btn.className = "flex items-center space-x-1.5 text-xs bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1.5 rounded-full font-medium";
-      btnText.textContent = "Updated! Please refresh";
-      alert(data.message || "Application successfully updated! Please refresh the page.");
+      btnText.textContent = "Updated! Refreshing...";
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
     } else {
       throw new Error(data.message || "Update failed");
     }
@@ -76,7 +79,6 @@ document.getElementById("btn-update-app")?.addEventListener("click", async () =>
     btn.className = "flex items-center space-x-1.5 text-xs bg-red-100 text-red-800 border border-red-300 px-3 py-1.5 rounded-full font-medium";
     btnText.textContent = "Update failed";
     showError("Update Error", "Failed to update application", err.message);
-  } finally {
     setTimeout(() => {
       btn.disabled = false;
       btn.classList.remove("opacity-75");
@@ -84,10 +86,31 @@ document.getElementById("btn-update-app")?.addEventListener("click", async () =>
   }
 });
 
+// Check if an application update is available
+async function checkForAppUpdate() {
+  const btn = document.getElementById("btn-update-app");
+  if (!btn) return;
+  try {
+    const res = await fetch("/api/check-update");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.update_available) {
+      btn.classList.remove("hidden");
+    } else {
+      btn.classList.add("hidden");
+    }
+  } catch (err) {
+    console.debug("Update check skipped:", err);
+  }
+}
+
 // Bootstrap Application
 async function bootApp() {
   const engineStatus = document.getElementById("engine-status");
   const engineStatusText = document.getElementById("engine-status-text");
+
+  // Check for updates asynchronously without blocking engine load
+  checkForAppUpdate();
 
   try {
     const pyodide = await initPyodideEngine(

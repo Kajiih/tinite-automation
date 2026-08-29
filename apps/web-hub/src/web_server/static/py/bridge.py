@@ -1,5 +1,4 @@
-"""
-Pyodide WebAssembly Bridge Module
+"""Pyodide WebAssembly Bridge Module.
 
 Provides strongly typed JSON-serialized execution wrappers for vat_report and image_renamer
 called by JavaScript in the browser.
@@ -11,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Literal, TypedDict
 
-from image_renamer.engine import extract_suffix, generate_image_manifest, parse_asins
+from image_renamer.engine import generate_image_manifest, parse_asins
 from vat_report.engine import load_price_catalog, process_batch, process_vat_report
 
 
@@ -63,10 +62,14 @@ class ImageManifestEntry(TypedDict):
     target_relative_path: str
 
 
-def run_vat_single(report_filename: str, catalog_filename: str, output_filename: str | None = None) -> str:
+def run_vat_single(
+    report_filename: str, catalog_filename: str, output_filename: str | None = None
+) -> str:
     """Process a single VAT report and return strongly typed JSON summary."""
     price_catalog = load_price_catalog(Path(catalog_filename))
-    out_path = Path(output_filename) if output_filename else Path(report_filename).parent / "output.csv"
+    out_path = (
+        Path(output_filename) if output_filename else Path(report_filename).parent / "output.csv"
+    )
     result = process_vat_report(
         Path(report_filename),
         price_catalog,
@@ -145,7 +148,7 @@ def run_vat_batch(input_dir_name: str, catalog_filename: str) -> str:
         "fc_transfer_count": batch_result.grand_fc_transfers,
         "fc_transfer_updated": batch_result.grand_fc_updated,
         "total_value_added": batch_result.grand_value_added,
-        "missing_asins": sorted(list(batch_result.all_missing_asins)),
+        "missing_asins": sorted(batch_result.all_missing_asins),
         "routes": consolidated_routes,
         "files": files_data,
     }

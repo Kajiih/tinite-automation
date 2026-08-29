@@ -1,15 +1,16 @@
-"""
-Shared Pytest Fixtures and Fakes for VAT Report Testing
-"""
+"""Shared Pytest Fixtures and Fakes for VAT Report Testing."""
 
 from __future__ import annotations
 
 import csv
-from collections.abc import Callable, Sequence
 from pathlib import Path
-import pytest
+from typing import TYPE_CHECKING
 
+import pytest
 from vat_report.engine import ColumnHeader, TransactionType, load_price_catalog
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 PACKAGE_DIR: Path = Path(__file__).resolve().parent.parent
 
@@ -34,51 +35,56 @@ def price_catalog(price_catalog_path: Path) -> dict[str, float]:
 
 @pytest.fixture
 def fake_vat_csv_factory(tmp_path: Path) -> Callable[[Sequence[dict[str, str]]], Path]:
-    """
-    Factory fixture to build synthetic Amazon VAT CSV reports for targeted behavioral testing.
-    """
-    def _create_report(custom_rows: Sequence[dict[str, str]], filename: str = "synthetic_vat.csv") -> Path:
-        headers = [
-            "TRANSACTION_EVENT_ID",
-            "ACTIVITY_PERIOD",
-            "TAX_CALCULATION_DATE",
-            "TRANSACTION_COMPLETE_DATE",
-            "ACTIVITY_TYPE",
-            ColumnHeader.TRANSACTION_TYPE.value,  # Index 5
-            "MERCHANT_SELLER_VAT_NUMBER",
-            "BUYER_VAT_NUMBER",
-            "TAX_COLLECTION_RESPONSIBILITY",
-            "TRANSACTION_SELLER_ROLE",
-            "SELLER_TAX_REGISTRATION_JURISDICTION",
-            "BUYER_TAX_REGISTRATION_JURISDICTION",
-            "MARKETPLACE_VAT_INVOICE_NUMBER",
-            ColumnHeader.ASIN.value,  # Index 13
-            "SKU",
-            "ITEM_DESCRIPTION",
-            ColumnHeader.QUANTITY.value,  # Index 16
-            "ITEM_MANUFACTURE_COUNTRY",
-            "TAXABLE_JURISDICTION",
-            ColumnHeader.COST_PRICE_OF_ITEMS.value,  # Index 19
-            ColumnHeader.PRICE_OF_ITEMS_AMT_VAT_EXCL.value,  # Index 20
-            "PROMO_PRICE_OF_ITEMS_AMT_VAT_EXCL",
-            ColumnHeader.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL.value,  # Index 22
-            "ITEM_PRICE_VAT_RATE_PERCENT",
-            "PRICE_OF_ITEMS_VAT_AMT",
-            "PROMO_PRICE_OF_ITEMS_VAT_AMT",
-            "TOTAL_PRICE_OF_ITEMS_VAT_AMT",
-            "PRICE_OF_ITEMS_AMT_VAT_INCL",
-            "PROMO_PRICE_OF_ITEMS_AMT_VAT_INCL",
-            ColumnHeader.TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL.value,  # Index 29
-            "TOTAL_ACTIVITY_VALUE_VAT_AMT",
-            "TOTAL_ACTIVITY_VALUE_AMT_VAT_INCL",
-            "DEPARTURE_CITY",
-            "DEPARTURE_COUNTRY",  # Index 33 in short or 62 in full
-        ] + [f"EXTRA_COL_{i}" for i in range(34, 62)] + [
-            ColumnHeader.DEPARTURE_COUNTRY.value,  # Index 62
-            "DEPARTURE_POST_CODE",
-            "ARRIVAL_CITY",
-            ColumnHeader.ARRIVAL_COUNTRY.value,  # Index 65
-        ]
+    """Factory fixture to build synthetic Amazon VAT CSV reports for targeted behavioral testing."""
+
+    def _create_report(
+        custom_rows: Sequence[dict[str, str]], filename: str = "synthetic_vat.csv"
+    ) -> Path:
+        headers = (
+            [
+                "TRANSACTION_EVENT_ID",
+                "ACTIVITY_PERIOD",
+                "TAX_CALCULATION_DATE",
+                "TRANSACTION_COMPLETE_DATE",
+                "ACTIVITY_TYPE",
+                ColumnHeader.TRANSACTION_TYPE.value,  # Index 5
+                "MERCHANT_SELLER_VAT_NUMBER",
+                "BUYER_VAT_NUMBER",
+                "TAX_COLLECTION_RESPONSIBILITY",
+                "TRANSACTION_SELLER_ROLE",
+                "SELLER_TAX_REGISTRATION_JURISDICTION",
+                "BUYER_TAX_REGISTRATION_JURISDICTION",
+                "MARKETPLACE_VAT_INVOICE_NUMBER",
+                ColumnHeader.ASIN.value,  # Index 13
+                "SKU",
+                "ITEM_DESCRIPTION",
+                ColumnHeader.QUANTITY.value,  # Index 16
+                "ITEM_MANUFACTURE_COUNTRY",
+                "TAXABLE_JURISDICTION",
+                ColumnHeader.COST_PRICE_OF_ITEMS.value,  # Index 19
+                ColumnHeader.PRICE_OF_ITEMS_AMT_VAT_EXCL.value,  # Index 20
+                "PROMO_PRICE_OF_ITEMS_AMT_VAT_EXCL",
+                ColumnHeader.TOTAL_PRICE_OF_ITEMS_AMT_VAT_EXCL.value,  # Index 22
+                "ITEM_PRICE_VAT_RATE_PERCENT",
+                "PRICE_OF_ITEMS_VAT_AMT",
+                "PROMO_PRICE_OF_ITEMS_VAT_AMT",
+                "TOTAL_PRICE_OF_ITEMS_VAT_AMT",
+                "PRICE_OF_ITEMS_AMT_VAT_INCL",
+                "PROMO_PRICE_OF_ITEMS_AMT_VAT_INCL",
+                ColumnHeader.TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL.value,  # Index 29
+                "TOTAL_ACTIVITY_VALUE_VAT_AMT",
+                "TOTAL_ACTIVITY_VALUE_AMT_VAT_INCL",
+                "DEPARTURE_CITY",
+                "DEPARTURE_COUNTRY",  # Index 33 in short or 62 in full
+            ]
+            + [f"EXTRA_COL_{i}" for i in range(34, 62)]
+            + [
+                ColumnHeader.DEPARTURE_COUNTRY.value,  # Index 62
+                "DEPARTURE_POST_CODE",
+                "ARRIVAL_CITY",
+                ColumnHeader.ARRIVAL_COUNTRY.value,  # Index 65
+            ]
+        )
 
         csv_path = tmp_path / filename
         rows_to_write = [headers]
@@ -99,7 +105,7 @@ def fake_vat_csv_factory(tmp_path: Path) -> Callable[[Sequence[dict[str, str]]],
 
             rows_to_write.append(row)
 
-        with open(csv_path, mode="w", encoding="utf-8-sig", newline="") as f:
+        with csv_path.open(mode="w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
             writer.writerows(rows_to_write)
 

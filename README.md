@@ -19,11 +19,11 @@ tinite-automation/
 ├── apps/
 │   └── web-hub/                    # User-Facing Web Hub Application
 │       ├── pyproject.toml          # App package (depends on workspace libs)
-│       ├── src/web_server/
-│       │   ├── __init__.py
-│       │   └── server.py           # Port fallback server & Pyodide engine streamer
-│       └── static/
-│           └── index.html          # WebAssembly Multi-Tool Web Hub
+│       └── src/web_server/
+│           ├── __init__.py
+│           ├── server.py           # Port fallback server & Pyodide engine streamer
+│           ├── updater.py          # Cross-platform in-browser updater
+│           └── static/             # WebAssembly Multi-Tool Web Hub (HTML, CSS, JS)
 │
 └── libs/
     ├── vat-report/                 # Pure VAT Report Automation Engine

@@ -1,5 +1,4 @@
-"""
-Amazon ASIN Image Duplicator & Renamer Engine
+"""Amazon ASIN Image Duplicator & Renamer Engine.
 
 Duplicates a collection of base template images (<SUFFIX>.<ext>) across a target list of ASINs,
 generating an organized folder structure for each ASIN:
@@ -19,9 +18,12 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -41,6 +43,7 @@ ASIN_REGEX_PATTERN: re.Pattern[str] = re.compile(r"^[A-Z0-9]{10}$")
 @dataclass(slots=True)
 class ImageEntry:
     """Represents a source template image and its extracted suffix/extension."""
+
     original_name: str
     suffix: str
     extension: str
@@ -49,6 +52,7 @@ class ImageEntry:
 @dataclass(slots=True)
 class TargetImageFile:
     """Represents a generated target file for an ASIN."""
+
     asin: str
     source_filename: str
     target_folder: str
@@ -59,6 +63,7 @@ class TargetImageFile:
 @dataclass(slots=True)
 class DuplicationResult:
     """Summary of the image duplication execution."""
+
     asins_count: int
     source_images_count: int
     total_created_files: int
@@ -68,9 +73,8 @@ class DuplicationResult:
 
 
 def extract_suffix(filename: str) -> tuple[str, str]:
-    """
-    Extract the suffix and extension from an image filename.
-    
+    """Extract the suffix and extension from an image filename.
+
     Examples:
         - "MAIN.jpg" -> ("MAIN", "jpg")
         - "PT01.png" -> ("PT01", "png")
@@ -152,7 +156,9 @@ def parse_asins_from_excel(file_bytes_or_path: bytes | Path) -> list[str]:
     import openpyxl
 
     if isinstance(file_bytes_or_path, bytes):
-        wb = openpyxl.load_workbook(filename=io.BytesIO(file_bytes_or_path), data_only=True, read_only=True)
+        wb = openpyxl.load_workbook(
+            filename=io.BytesIO(file_bytes_or_path), data_only=True, read_only=True
+        )
     else:
         wb = openpyxl.load_workbook(filename=file_bytes_or_path, data_only=True, read_only=True)
 
@@ -183,17 +189,14 @@ def parse_asins_from_excel(file_bytes_or_path: bytes | Path) -> list[str]:
 
 
 def parse_asins(source: str | bytes | Path) -> list[str]:
-    """
-    Unified ASIN parser supporting strings, .txt paths, .csv, and .xlsx.
-    """
+    """Unified ASIN parser supporting strings, .txt paths, .csv, and .xlsx."""
     if isinstance(source, Path):
         ext = source.suffix.lower()
         if ext == ".xlsx":
             return parse_asins_from_excel(source)
-        elif ext == ".csv":
+        if ext == ".csv":
             return parse_asins_from_csv(source.read_text(encoding="utf-8-sig"))
-        else:
-            return parse_asins_from_text(source.read_text(encoding="utf-8-sig"))
+        return parse_asins_from_text(source.read_text(encoding="utf-8-sig"))
 
     if isinstance(source, bytes):
         # Inspect magic bytes or fallback to text
@@ -211,16 +214,16 @@ def generate_image_manifest(
     image_filenames: Sequence[str],
     asins: Sequence[str],
 ) -> list[TargetImageFile]:
-    """
-    Compute the target file list and folder structure for all ASINs.
-    """
+    """Compute the target file list and folder structure for all ASINs."""
     entries: list[ImageEntry] = []
     for fname in image_filenames:
         base_name = Path(fname).name
         ext = Path(base_name).suffix.lstrip(".").lower()
         if ext in SUPPORTED_IMAGE_EXTENSIONS or not ext:
             suffix, extension = extract_suffix(base_name)
-            entries.append(ImageEntry(original_name=base_name, suffix=suffix, extension=extension or "jpg"))
+            entries.append(
+                ImageEntry(original_name=base_name, suffix=suffix, extension=extension or "jpg")
+            )
 
     manifest: list[TargetImageFile] = []
     for asin in asins:
@@ -245,25 +248,29 @@ def duplicate_images(
     output_dir: Path,
     use_hardlinks: bool = False,
 ) -> DuplicationResult:
-    """
-    Duplicate images from images_dir across each ASIN into output_dir/<ASIN>/<ASIN>.<SUFFIX>.<ext>.
-    """
+    """Duplicate images from images_dir across each ASIN into output_dir/<ASIN>/<ASIN>.<SUFFIX>.<ext>."""
     if not images_dir.is_dir():
-        raise NotADirectoryError(f"Images source directory not found: {images_dir}")
+        msg = f"Images source directory not found: {images_dir}"
+        raise NotADirectoryError(msg)
 
     if not asins:
-        raise ValueError("No valid ASINs provided for image duplication.")
+        msg = "No valid ASINs provided for image duplication."
+        raise ValueError(msg)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect source images
     source_files: list[Path] = [
-        f for f in sorted(images_dir.iterdir())
-        if f.is_file() and not f.name.startswith(".") and f.suffix.lstrip(".").lower() in SUPPORTED_IMAGE_EXTENSIONS
+        f
+        for f in sorted(images_dir.iterdir())
+        if f.is_file()
+        and not f.name.startswith(".")
+        and f.suffix.lstrip(".").lower() in SUPPORTED_IMAGE_EXTENSIONS
     ]
 
     if not source_files:
-        raise FileNotFoundError(f"No supported images found in directory: {images_dir}")
+        msg = f"No supported images found in directory: {images_dir}"
+        raise FileNotFoundError(msg)
 
     image_names = [f.name for f in source_files]
     manifest = generate_image_manifest(image_names, asins)
@@ -342,10 +349,7 @@ def main() -> None:
     args = parser.parse_args()
 
     asins_path = Path(args.asins_source).expanduser()
-    if asins_path.exists():
-        asins = parse_asins(asins_path)
-    else:
-        asins = parse_asins(args.asins_source)
+    asins = parse_asins(asins_path) if asins_path.exists() else parse_asins(args.asins_source)
 
     if not asins:
         print("Error: No ASINs found in input.")
@@ -367,7 +371,9 @@ def main() -> None:
             output_dir=args.output_dir.expanduser().resolve(),
             use_hardlinks=args.hardlinks,
         )
-        print(f"  ✓ Success! Generated {result.total_created_files} images for {result.asins_count} ASINs.")
+        print(
+            f"  ✓ Success! Generated {result.total_created_files} images for {result.asins_count} ASINs."
+        )
         print(f"  Location: {result.output_directory}")
         print("=" * 64 + "\n")
     except Exception:
