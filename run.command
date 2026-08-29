@@ -22,5 +22,5 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
-# Execute Python application (opens Web App by default or CLI with arguments)
-uv run python -m amazon_vat_automation.process_report "$@"
+# Execute Python application with production dependencies only (opens Web App by default or CLI with arguments)
+uv run --no-dev python -m amazon_vat_automation.process_report "$@"

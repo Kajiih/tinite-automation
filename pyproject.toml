@@ -26,3 +26,6 @@ packages = ["src/amazon_vat_automation"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.uv]
+index-url = "https://pypi.org/simple"
