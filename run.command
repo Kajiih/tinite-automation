@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Double-clickable launcher for macOS
+# Double-clickable launcher for macOS (powered by uv)
 
 cd "$(dirname "$0")" || exit 1
 
@@ -8,15 +8,17 @@ echo "    Amazon VAT Report - FC_Transfer Price Automation"
 echo "============================================================"
 echo ""
 
-# Prefer uv if available, fallback to python3
-if command -v uv &> /dev/null; then
-    uv run process_report.py "$@"
-elif command -v python3 &> /dev/null; then
-    python3 process_report.py "$@"
-else
-    echo "Error: Neither 'uv' nor 'python3' was found on your system."
-    echo "Please install uv (https://docs.astral.sh/uv/) or Python 3."
+# Ensure uv install locations are in PATH
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+# Auto-install uv if not present
+if ! command -v uv &> /dev/null; then
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
+
+uv run process_report.py "$@"
 
 echo ""
 echo "Press [Enter] to close this window..."
