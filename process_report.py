@@ -50,7 +50,7 @@ DEFAULT_ENCODING: str = "utf-8-sig"
 CSV_LINE_TERMINATOR: str = "\r\n"
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True, order=True, slots=True)
 class RouteKey:
     """Represents a cross-border transfer route (Departure Country -> Arrival Country)."""
     departure_country: str
@@ -60,7 +60,7 @@ class RouteKey:
         return f"{self.departure_country} -> {self.arrival_country}"
 
 
-@dataclass
+@dataclass(slots=True)
 class RouteMetric:
     """Accumulator for cross-border transfer statistics along a specific route."""
     transfer_count: int = 0
@@ -71,16 +71,16 @@ class RouteMetric:
         """Add a single transfer event to the accumulated route metrics."""
         self.transfer_count += 1
         self.total_quantity += quantity
-        self.total_amount_eur += amount_eur
+        self.total_amount_eur = round(self.total_amount_eur + amount_eur, 2)
 
     def merge_metrics(self, other: RouteMetric) -> None:
         """Merge metrics from another route accumulator."""
         self.transfer_count += other.transfer_count
         self.total_quantity += other.total_quantity
-        self.total_amount_eur += other.total_amount_eur
+        self.total_amount_eur = round(self.total_amount_eur + other.total_amount_eur, 2)
 
 
-@dataclass
+@dataclass(slots=True)
 class FileProcessingResult:
     """Detailed summary statistics for a single processed VAT report."""
     report_path: Path
@@ -95,7 +95,7 @@ class FileProcessingResult:
     route_statistics: Mapping[RouteKey, RouteMetric]
 
 
-@dataclass
+@dataclass(slots=True)
 class BatchProcessingResult:
     """Consolidated summary statistics for an entire batch of processed VAT reports."""
     input_directory: Path
@@ -187,11 +187,13 @@ def load_price_catalog(price_catalog_path: Path) -> Mapping[str, float]:
                     str(raw_price)
                     .replace(",", ".")
                     .replace("€", "")
+                    .replace("$", "")
+                    .replace("£", "")
                     .replace("\xa0", "")
                     .strip()
                 )
                 price = float(sanitized_price_string)
-            price_catalog[asin] = price
+            price_catalog[asin] = round(price, 2)
         except (ValueError, TypeError):
             logger.warning(
                 "Skipping unparseable price at row %d for ASIN '%s': %r",
@@ -377,7 +379,7 @@ def process_vat_report(
             if transaction_type == TransactionType.FC_TRANSFER:
                 fc_transfer_count += 1
                 asin = row_cells[index_asin].strip() if len(row_cells) > index_asin else ""
-                quantity_string = (
+                raw_quantity = (
                     row_cells[index_quantity].strip() if len(row_cells) > index_quantity else "1"
                 )
 
@@ -396,13 +398,15 @@ def process_vat_report(
                 route_key = RouteKey(departure_country, arrival_country)
 
                 try:
-                    quantity = float(quantity_string) if quantity_string else 1.0
+                    quantity = (
+                        float(raw_quantity.replace(",", ".")) if raw_quantity else 1.0
+                    )
                 except ValueError:
                     quantity = 1.0
 
                 if asin in price_catalog:
                     unit_price = price_catalog[asin]
-                    total_price = unit_price * quantity
+                    total_price = round(unit_price * quantity, 2)
 
                     row_cells[index_cost_price] = f"{unit_price:.2f}"
                     row_cells[index_item_price_vat_excl] = f"{total_price:.2f}"
@@ -413,7 +417,7 @@ def process_vat_report(
                         row_cells[index_total_activity_vat_excl] = ""
 
                     fc_transfer_updated += 1
-                    total_value_added += total_price
+                    total_value_added = round(total_value_added + total_price, 2)
                     route_statistics[route_key].add_transfer(quantity=quantity, amount_eur=total_price)
                 else:
                     missing_asins.add(asin)
@@ -505,7 +509,7 @@ def process_batch(
         batch_result.grand_total_rows += file_result.total_rows
         batch_result.grand_fc_transfers += file_result.fc_transfer_count
         batch_result.grand_fc_updated += file_result.fc_transfer_updated
-        batch_result.grand_value_added += file_result.total_value_added
+        batch_result.grand_value_added = round(batch_result.grand_value_added + file_result.total_value_added, 2)
         batch_result.all_missing_asins.update(file_result.missing_asins)
 
         for route_key, metric in file_result.route_statistics.items():
