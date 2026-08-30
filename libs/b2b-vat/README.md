@@ -18,17 +18,17 @@ Pure Python domain library and CLI to filter and aggregate zero-rated cross-bord
 
 ```bash
 # Process report and display summary table in terminal:
-uv run b2b-vat -r "path/to/report.csv"
+uv run b2b-vat --report "path/to/report.csv"
 
 # Process report with custom departure country and CSV exports:
 uv run b2b-vat \
-  -r "path/to/report.csv" \
-  -d "FR" \
-  -s "summary.csv" \
-  -t "transactions.csv"
+  --report "path/to/report.csv" \
+  --departure "FR" \
+  --output-summary "summary.csv" \
+  --output-transactions "transactions.csv"
 ```
 
 > To download invoice PDFs, use the companion package `invoice-downloader`:
 > ```bash
-> uv run invoice-downloader -r "path/to/report.csv"
+> uv run invoice-downloader --report "path/to/report.csv"
 > ```

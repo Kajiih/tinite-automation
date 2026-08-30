@@ -12,11 +12,11 @@ Amazon Seller Central Invoice Downloader with multi-browser session auto-detecti
 
 ```bash
 # Download B2B intra-EU invoices with auto browser detection:
-uv run invoice-downloader -r "path/to/taxReport.csv"
+uv run invoice-downloader --report "path/to/taxReport.csv"
 
 # Download ALL invoices from an Amazon report:
-uv run invoice-downloader -r "path/to/taxReport.csv" --all
+uv run invoice-downloader --report "path/to/taxReport.csv" --all
 
 # Target a specific browser:
-uv run invoice-downloader -r "path/to/taxReport.csv" --browser firefox
+uv run invoice-downloader --report "path/to/taxReport.csv" --browser firefox
 ```

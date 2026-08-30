@@ -13,8 +13,14 @@ tinite-automation/
 ├── pyproject.toml                  # Root workspace manifest
 ├── uv.lock                         # Universal workspace lockfile
 ├── README.md
-├── run.command                     # macOS 1-click launcher (starts Web Hub)
-├── run.bat                         # Windows 1-click launcher (starts Web Hub)
+├── run.command                     # macOS 1-click launcher (starts Web Hub or forwards CLI)
+├── run.bat                         # Windows 1-click launcher (starts Web Hub or forwards CLI)
+│
+├── scripts/
+│   ├── macos/
+│   │   └── download_b2b_invoices.command  # Drag-and-drop invoice downloader for macOS
+│   └── windows/
+│       └── download_b2b_invoices.bat      # Drag-and-drop invoice downloader for Windows
 │
 ├── apps/
 │   └── web-hub/                    # User-Facing Web Hub Application
@@ -37,13 +43,21 @@ tinite-automation/
     │       ├── sample_vat_report.csv
     │       └── amazon_asin_prix_achat_cogs_maj.xlsx
     │
-    ├── b2b-vat/                    # Pure B2B Intra-EU VAT Engine
-    │   ├── pyproject.toml          # Independent package
+    ├── b2b-vat/                    # Pure B2B Intra-EU VAT Engine (Pyodide / WASM compatible)
+    │   ├── pyproject.toml          # Independent package (pure Python)
     │   ├── src/b2b_vat/
     │   │   ├── __init__.py
     │   │   └── engine.py
     │   └── tests/
     │       └── test_b2b_vat.py
+    │
+    ├── invoice-downloader/         # Amazon Invoice Downloader with Browser Session Auto-Detection
+    │   ├── pyproject.toml          # Independent package (browser-cookie3)
+    │   ├── src/invoice_downloader/
+    │   │   ├── __init__.py
+    │   │   └── engine.py
+    │   └── tests/
+    │       └── test_invoice_downloader.py
     │
     └── image-renamer/              # Pure ASIN Image Duplicator & Renamer Engine
         ├── pyproject.toml          # Independent package
@@ -74,17 +88,17 @@ tinite-automation/
 uv run --package web-hub amazon-tools
 
 # B2B Intra-EU VAT Automation:
-uv run --package b2b-vat b2b-vat process \
-  --report "taxReport_Juillet 2026.csv" \
+uv run b2b-vat \
+  --report "taxReport_July_2026.csv" \
   --departure "FR" \
   --output-summary "b2b_summary.csv" \
   --output-transactions "b2b_transactions.csv"
 
-# Download B2B Invoices (via browser session):
-uv run --package b2b-vat b2b-vat download-invoices \
-  --report "taxReport_Juillet 2026.csv" \
-  --output-dir "./invoices/" \
-  --browser "chrome"
+# Download B2B Invoices (with browser session auto-detection):
+uv run invoice-downloader --report "taxReport_July_2026.csv"
+
+# Download ALL invoice URLs in any report:
+uv run invoice-downloader --report "taxReport_July_2026.csv" --all
 
 # VAT Report Automation (FC Transfers):
 uv run --package vat-report vat-report \

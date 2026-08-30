@@ -8,7 +8,7 @@ if [ -z "$CSV_PATH" ]; then
     echo "  Amazon B2B Intra-EU Invoice Downloader (macOS)"
     echo "========================================================"
     echo ""
-    read -r -p "Glissez-déposez votre rapport TVA (.csv) ici et appuyez sur Entrée : " CSV_PATH
+    read -r -p "Drag and drop your VAT report (.csv) here and press Enter: " CSV_PATH
 fi
 
 # Strip quotes and leading/trailing escaped characters from drag-and-drop
@@ -29,12 +29,12 @@ fi
 
 if [ -z "$CSV_PATH" ] || [ ! -f "$CSV_PATH" ]; then
     echo ""
-    echo "[ERROR] Fichier introuvable : $CSV_PATH"
+    echo "[ERROR] File not found: $CSV_PATH"
     echo ""
-    read -r -p "Appuyez sur Entrée pour quitter..."
+    read -r -p "Press Enter to exit..."
     exit 1
 fi
 
-"$REPO_ROOT/run.command" invoice-downloader -r "$CSV_PATH"
+"$REPO_ROOT/run.command" invoice-downloader --report "$CSV_PATH"
 echo ""
-read -r -p "Appuyez sur Entrée pour quitter..."
+read -r -p "Press Enter to exit..."

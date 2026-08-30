@@ -761,10 +761,10 @@ def main() -> None:
         print("     Chrome (127+) on Windows locks session cookies with App-Bound encryption.")
         print("     Quick alternatives to download immediately:")
         print("     1. Log in via Firefox or Edge and run:")
-        print("        uv run invoice-downloader -r <report> --browser edge")
-        print("        uv run invoice-downloader -r <report> --browser firefox")
+        print("        uv run invoice-downloader --report <report> --browser edge")
+        print("        uv run invoice-downloader --report <report> --browser firefox")
         print("     2. Or copy the Cookie header from DevTools (F12 -> Network):")
-        print('        uv run invoice-downloader -r <report> --cookies "session-id=..."\n')
+        print('        uv run invoice-downloader --report <report> --cookies "session-id=..."\n')
     else:
         print()
 
