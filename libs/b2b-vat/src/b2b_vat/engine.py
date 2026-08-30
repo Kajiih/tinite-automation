@@ -21,6 +21,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
@@ -129,6 +130,73 @@ class B2BProcessingResult:
     transactions: Sequence[B2BTransactionRow]
 
 
+# ---------------------------------------------------------------------------
+# Domain Exceptions (Grounding: requests.exceptions, urllib3.exceptions)
+# ---------------------------------------------------------------------------
+
+
+class B2BVATError(Exception):
+    """Base domain exception for all B2B VAT operations."""
+
+
+class ReportNotFoundError(B2BVATError, FileNotFoundError):
+    """Raised when the specified Amazon VAT report file does not exist."""
+
+
+class ReportPathIsDirectoryError(B2BVATError, ValueError):
+    """Raised when a directory path is supplied where a CSV file is required."""
+
+
+class InvalidReportFormatError(B2BVATError, ValueError):
+    """Raised when required headers or data rows in the VAT report are invalid."""
+
+
+class InvoiceDownloadError(B2BVATError):
+    """Base domain exception for invoice downloading errors."""
+
+
+class UnsupportedBrowserError(InvoiceDownloadError, ValueError):
+    """Raised when an unsupported browser name is requested for cookie extraction."""
+
+
+class AuthenticationRequiredError(InvoiceDownloadError):
+    """Raised when an Amazon Seller Central session is unauthenticated or expired."""
+
+
+# ---------------------------------------------------------------------------
+# Observable Progress Events (Grounding: huggingface_hub, pip.utils.logging)
+# ---------------------------------------------------------------------------
+
+
+class DownloadPhase(StrEnum):
+    """Lifecycle phase of an invoice download process."""
+
+    SCANNING = "SCANNING"
+    COOKIES = "COOKIES"
+    STARTING = "STARTING"
+    DOWNLOADING = "DOWNLOADING"
+    SAVED = "SAVED"
+    AUTH_FAILED = "AUTH_FAILED"
+    FAILED = "FAILED"
+    COMPLETED = "COMPLETED"
+
+
+@dataclass(frozen=True, slots=True)
+class InvoiceDownloadEvent:
+    """Event emitted during the invoice downloading lifecycle."""
+
+    phase: DownloadPhase
+    current: int = 0
+    total: int = 0
+    order_id: str = ""
+    filename: str = ""
+    size_bytes: int = 0
+    message: str = ""
+
+
+InvoiceProgressCallback = Callable[[InvoiceDownloadEvent], None]
+
+
 @dataclass(slots=True)
 class InvoiceDownloadResult:
     """Summary metrics of an invoice download operation."""
@@ -179,7 +247,7 @@ def _resolve_indices(header: Sequence[str]) -> Mapping[ColumnHeader, int]:
         Mapping of ColumnHeader to 0-based column index in the header row.
 
     Raises:
-        ValueError: If mandatory Amazon VAT report columns are missing.
+        InvalidReportFormatError: If mandatory Amazon VAT report columns are missing.
     """
     normalized_header: dict[str, int] = {
         col_name.strip().lower(): idx for idx, col_name in enumerate(header)
@@ -202,7 +270,7 @@ def _resolve_indices(header: Sequence[str]) -> Mapping[ColumnHeader, int]:
     if missing_required:
         missing_str = ", ".join(f"'{h}'" for h in missing_required)
         msg = f"Invalid Amazon VAT Report format: missing required columns: {missing_str}"
-        raise ValueError(msg)
+        raise InvalidReportFormatError(msg)
 
     return resolved
 
@@ -285,14 +353,14 @@ def scan_b2b_vat_csv(
         Tuple of (total_rows_scanned, list of transaction rows, list of VAT summaries).
 
     Raises:
-        ValueError: If the CSV file is empty.
+        InvalidReportFormatError: If the CSV file is empty or headers are invalid.
     """
     reader = csv.reader(file_handle)
     try:
         header = next(reader)
     except StopIteration:
         msg = "VAT report CSV is empty"
-        raise ValueError(msg) from None
+        raise InvalidReportFormatError(msg) from None
 
     indices = _resolve_indices(header)
     target_dep = departure_country.strip().upper()
@@ -333,11 +401,19 @@ def process_b2b_vat_report(
         B2BProcessingResult containing summaries, transactions, and grand totals.
 
     Raises:
-        FileNotFoundError: If the report file does not exist.
+        ReportNotFoundError: If the report file does not exist.
+        ReportPathIsDirectoryError: If report_path is a directory instead of a file.
     """
     if not report_path.exists():
         msg = f"VAT report file not found at: {report_path}"
-        raise FileNotFoundError(msg)
+        raise ReportNotFoundError(msg)
+
+    if report_path.is_dir():
+        msg = (
+            f"Expected a CSV report file, but received a directory: {report_path}\n"
+            f"Please specify the full path to the .csv file."
+        )
+        raise ReportPathIsDirectoryError(msg)
 
     with report_path.open(encoding=DEFAULT_ENCODING, newline="") as file_handle:
         total_rows, transactions, summaries = scan_b2b_vat_csv(
@@ -554,7 +630,7 @@ def extract_browser_cookies(
         CookieJar containing extracted browser cookies.
 
     Raises:
-        ValueError: If the browser name is unsupported.
+        UnsupportedBrowserError: If the browser name is unsupported.
     """
     browser_map = {
         "chrome": browser_cookie3.chrome,
@@ -572,7 +648,7 @@ def extract_browser_cookies(
     if loader is None:
         valid_opts = ", ".join(sorted(browser_map.keys()))
         msg = f"Unsupported browser '{browser}'. Valid options: {valid_opts}"
-        raise ValueError(msg)
+        raise UnsupportedBrowserError(msg)
 
     jar = http.cookiejar.CookieJar()
     for domain in domains:
@@ -630,7 +706,6 @@ def _download_single_invoice(
 
     if body.startswith(b"%PDF") or "application/pdf" in content_type:
         target_file.write_bytes(body)
-        logger.info("Saved: %s (%d bytes)", target_file.name, len(body))
         return target_file
 
     logger.warning(
@@ -642,6 +717,47 @@ def _download_single_invoice(
     return None
 
 
+def _build_http_opener(
+    *,
+    browser: str,
+    cookie_string: str | None,
+    cookie_file: Path | None,
+    progress_callback: InvoiceProgressCallback | None,
+) -> urllib.request.OpenerDirector:
+    """Build and configure urllib HTTP opener with session cookies."""
+    if cookie_file and cookie_file.exists():
+        if progress_callback:
+            progress_callback(
+                InvoiceDownloadEvent(
+                    phase=DownloadPhase.COOKIES,
+                    message=f"Loading cookies from file: {cookie_file}",
+                )
+            )
+        jar: http.cookiejar.CookieJar = http.cookiejar.MozillaCookieJar(cookie_file)
+        jar.load(ignore_discard=True, ignore_expires=True)  # type: ignore[attr-defined]
+        return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+
+    if cookie_string:
+        if progress_callback:
+            progress_callback(
+                InvoiceDownloadEvent(
+                    phase=DownloadPhase.COOKIES,
+                    message="Using provided cookie header string",
+                )
+            )
+        return urllib.request.build_opener()
+
+    if progress_callback:
+        progress_callback(
+            InvoiceDownloadEvent(
+                phase=DownloadPhase.COOKIES,
+                message=f"Extracting cookies from browser: '{browser}'",
+            )
+        )
+    extracted_jar = extract_browser_cookies(browser=browser)
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(extracted_jar))
+
+
 def download_invoices_for_report(
     report_path: Path,
     output_dir: Path,
@@ -650,31 +766,56 @@ def download_invoices_for_report(
     browser: str = "chrome",
     cookie_string: str | None = None,
     cookie_file: Path | None = None,
+    progress_callback: InvoiceProgressCallback | None = None,
 ) -> InvoiceDownloadResult:
     """Scan report, filter B2B cross-border transactions, and download invoice PDFs."""
+    if progress_callback:
+        progress_callback(
+            InvoiceDownloadEvent(
+                phase=DownloadPhase.SCANNING,
+                filename=report_path.name,
+                message=f"Scanning report: {report_path.name}",
+            )
+        )
+
     result = process_b2b_vat_report(report_path, departure_country=departure_country)
     valid_transactions = [
         tx for tx in result.transactions if tx.invoice_url and tx.invoice_url.strip()
     ]
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    total_count = len(valid_transactions)
+
     if not valid_transactions:
-        logger.info("No matching B2B transactions with invoice URLs found.")
+        if progress_callback:
+            progress_callback(
+                InvoiceDownloadEvent(
+                    phase=DownloadPhase.COMPLETED,
+                    total=0,
+                    message="No matching B2B transactions with invoice URLs found.",
+                )
+            )
         return InvoiceDownloadResult(
             total_invoices_found=0,
             successful_downloads=0,
             failed_downloads=0,
         )
 
-    if cookie_file and cookie_file.exists():
-        jar: http.cookiejar.CookieJar = http.cookiejar.MozillaCookieJar(cookie_file)
-        jar.load(ignore_discard=True, ignore_expires=True)  # type: ignore[attr-defined]
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    elif cookie_string:
-        opener = urllib.request.build_opener()
-    else:
-        extracted_jar = extract_browser_cookies(browser=browser)
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(extracted_jar))
+    opener = _build_http_opener(
+        browser=browser,
+        cookie_string=cookie_string,
+        cookie_file=cookie_file,
+        progress_callback=progress_callback,
+    )
+
+    if progress_callback:
+        progress_callback(
+            InvoiceDownloadEvent(
+                phase=DownloadPhase.STARTING,
+                total=total_count,
+                message=str(output_dir),
+            )
+        )
 
     successful = 0
     failed = 0
@@ -684,7 +825,19 @@ def download_invoices_for_report(
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     )
 
-    for tx in valid_transactions:
+    for idx, tx in enumerate(valid_transactions, start=1):
+        doc_name = f"{tx.invoice_number}.pdf" if tx.invoice_number else f"invoice_{tx.order_id}.pdf"
+        if progress_callback:
+            progress_callback(
+                InvoiceDownloadEvent(
+                    phase=DownloadPhase.DOWNLOADING,
+                    current=idx,
+                    total=total_count,
+                    order_id=tx.order_id,
+                    filename=doc_name,
+                )
+            )
+
         saved_path = _download_single_invoice(
             opener,
             tx,
@@ -693,14 +846,37 @@ def download_invoices_for_report(
             cookie_string=cookie_string,
             browser=browser,
         )
+
         if saved_path is not None:
             successful += 1
             downloaded_paths.append(saved_path)
+            file_size = saved_path.stat().st_size
+            if progress_callback:
+                progress_callback(
+                    InvoiceDownloadEvent(
+                        phase=DownloadPhase.SAVED,
+                        current=idx,
+                        total=total_count,
+                        order_id=tx.order_id,
+                        filename=doc_name,
+                        size_bytes=file_size,
+                    )
+                )
         else:
             failed += 1
+            if progress_callback:
+                progress_callback(
+                    InvoiceDownloadEvent(
+                        phase=DownloadPhase.AUTH_FAILED,
+                        current=idx,
+                        total=total_count,
+                        order_id=tx.order_id,
+                        filename=doc_name,
+                    )
+                )
 
     return InvoiceDownloadResult(
-        total_invoices_found=len(valid_transactions),
+        total_invoices_found=total_count,
         successful_downloads=successful,
         failed_downloads=failed,
         downloaded_files=downloaded_paths,
@@ -711,8 +887,11 @@ def _handle_process_command(args: argparse.Namespace) -> None:
     """Handle CLI process subcommand execution."""
     try:
         result = process_b2b_vat_report(args.report, departure_country=args.departure)
-    except (FileNotFoundError, ValueError, OSError):
-        logger.exception("Processing failed")
+    except B2BVATError as err:
+        print(f"\n  [ERROR] Processing failed: {err}\n", file=sys.stderr)
+        sys.exit(1)
+    except OSError:
+        logger.exception("Unexpected system error during processing")
         sys.exit(1)
 
     print("\n" + "=" * HEADER_BANNER_LENGTH)
@@ -741,6 +920,28 @@ def _handle_process_command(args: argparse.Namespace) -> None:
         print(f"  [SAVED] Transactions exported to: {args.output_transactions}")
 
 
+def _cli_progress_callback(event: InvoiceDownloadEvent) -> None:
+    """Format and print real-time progress events to standard output."""
+    if event.phase == DownloadPhase.SCANNING:
+        print(f"\n  [1/3] Scanning VAT report: {event.filename}...", flush=True)
+    elif event.phase == DownloadPhase.COOKIES:
+        print(f"  [2/3] {event.message}...", flush=True)
+    elif event.phase == DownloadPhase.STARTING:
+        print(f"  [3/3] Downloading {event.total} invoice(s) into: {event.message}\n", flush=True)
+    elif event.phase == DownloadPhase.DOWNLOADING:
+        prefix = (
+            f"    [{event.current}/{event.total}] Order {event.order_id} ({event.filename})... "
+        )
+        print(prefix, end="", flush=True)
+    elif event.phase == DownloadPhase.SAVED:
+        size_kb = event.size_bytes / 1024
+        print(f"✅ Saved ({size_kb:.1f} KB)", flush=True)
+    elif event.phase == DownloadPhase.AUTH_FAILED:
+        print("❌ Failed (not logged in or session expired)", flush=True)
+    elif event.phase == DownloadPhase.FAILED:
+        print(f"❌ Failed ({event.message})", flush=True)
+
+
 def _handle_download_invoices_command(args: argparse.Namespace) -> None:
     """Handle CLI download-invoices subcommand execution."""
     target_out_dir = args.output_dir or (args.report.parent / f"{args.report.stem}_invoices")
@@ -752,9 +953,13 @@ def _handle_download_invoices_command(args: argparse.Namespace) -> None:
             browser=args.browser,
             cookie_string=args.cookies,
             cookie_file=args.cookie_file,
+            progress_callback=_cli_progress_callback,
         )
-    except (FileNotFoundError, ValueError, OSError):
-        logger.exception("Invoice downloading failed")
+    except B2BVATError as err:
+        print(f"\n  [ERROR] {err}\n", file=sys.stderr)
+        sys.exit(1)
+    except OSError:
+        logger.exception("Unexpected system error during invoice downloading")
         sys.exit(1)
 
     print("\n" + "=" * HEADER_BANNER_LENGTH)

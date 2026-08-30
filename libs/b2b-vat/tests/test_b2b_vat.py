@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import csv
+import http.cookiejar
 from typing import TYPE_CHECKING, Self
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from b2b_vat.engine import (
     REQUIRED_HEADERS,
+    B2BVATError,
     ColumnHeader,
+    DownloadPhase,
+    InvalidReportFormatError,
     InvoiceDownloadResult,
+    ReportNotFoundError,
+    ReportPathIsDirectoryError,
+    UnsupportedBrowserError,
     download_invoices_for_report,
     export_b2b_summary_csv,
     export_b2b_transactions_csv,
@@ -23,6 +30,8 @@ from b2b_vat.engine import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
+
+    from b2b_vat.engine import InvoiceDownloadEvent
 
 
 def test_empty_csv_raises_error(tmp_path: Path) -> None:
@@ -38,6 +47,14 @@ def test_file_not_found_raises_error(tmp_path: Path) -> None:
     missing = tmp_path / "non_existent.csv"
     with pytest.raises(FileNotFoundError):
         process_b2b_vat_report(missing)
+
+
+def test_directory_path_raises_error(tmp_path: Path) -> None:
+    """Passing a directory instead of CSV raises ValueError."""
+    dir_path = tmp_path / "some_dir"
+    dir_path.mkdir()
+    with pytest.raises(ValueError, match="Expected a CSV report file, but received a directory"):
+        process_b2b_vat_report(dir_path)
 
 
 def test_missing_required_headers_raises_error(tmp_path: Path) -> None:
@@ -548,3 +565,84 @@ def test_cli_download_invoices_default_output_dir(
         mock_dl.assert_called_once()
         _, kwargs = mock_dl.call_args
         assert kwargs["output_dir"] == expected_default_dir
+
+
+def test_download_invoices_emits_progress_events(
+    fake_b2b_vat_csv_factory: Callable[[Sequence[Mapping[str, str]]], Path],
+    tmp_path: Path,
+) -> None:
+    """Test download_invoices_for_report invokes progress_callback with structured events."""
+    rows = [
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-EVENT",
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "DE123456789",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "DE",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "25.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "FR-EVENT-01",
+            ColumnHeader.INVOICE_URL.value: "https://sellercentral.amazon.fr/doc/download",
+        }
+    ]
+    report_file = fake_b2b_vat_csv_factory(rows)
+    out_dir = tmp_path / "events_out"
+
+    events: list[InvoiceDownloadEvent] = []
+
+    mock_response = MagicMock()
+    mock_response.headers.get.return_value = "application/pdf"
+    mock_response.geturl.return_value = "https://sellercentral.amazon.fr/doc/download"
+    mock_response.read.return_value = b"%PDF-1.4 Mock PDF Content"
+    mock_response.__enter__.return_value = mock_response
+
+    mock_opener = MagicMock()
+    mock_opener.open.return_value = mock_response
+
+    with (
+        patch("urllib.request.build_opener", return_value=mock_opener),
+        patch("b2b_vat.engine.extract_browser_cookies", return_value=http.cookiejar.CookieJar()),
+    ):
+        result = download_invoices_for_report(
+            report_file,
+            out_dir,
+            browser="chrome",
+            progress_callback=events.append,
+        )
+
+    assert result.successful_downloads == 1
+    phases = [e.phase for e in events]
+    assert DownloadPhase.SCANNING in phases
+    assert DownloadPhase.COOKIES in phases
+    assert DownloadPhase.STARTING in phases
+    assert DownloadPhase.DOWNLOADING in phases
+    assert DownloadPhase.SAVED in phases
+
+
+def test_domain_exceptions_inheritance(tmp_path: Path) -> None:
+    """Verify domain exceptions subclass both B2BVATError and standard Python errors."""
+    # 1. Non-existent file
+    missing = tmp_path / "non_existent_file.csv"
+    with pytest.raises(B2BVATError) as exc_info:
+        process_b2b_vat_report(missing)
+    assert isinstance(exc_info.value, (ReportNotFoundError, FileNotFoundError))
+
+    # 2. Directory path
+    dir_path = tmp_path / "test_directory"
+    dir_path.mkdir()
+    with pytest.raises(B2BVATError) as exc_info:
+        process_b2b_vat_report(dir_path)
+    assert isinstance(exc_info.value, (ReportPathIsDirectoryError, ValueError))
+
+    # 3. Empty CSV file
+    empty_csv = tmp_path / "empty_report.csv"
+    empty_csv.write_text("", encoding="utf-8")
+    with pytest.raises(B2BVATError) as exc_info:
+        process_b2b_vat_report(empty_csv)
+    assert isinstance(exc_info.value, (InvalidReportFormatError, ValueError))
+
+    # 4. Unsupported browser
+    with pytest.raises(B2BVATError) as exc_info:
+        extract_browser_cookies(browser="netscape_navigator")
+    assert isinstance(exc_info.value, (UnsupportedBrowserError, ValueError))
