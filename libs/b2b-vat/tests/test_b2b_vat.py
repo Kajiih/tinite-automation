@@ -666,6 +666,80 @@ def test_browser_auto_fallback_detection() -> None:
         assert len(jar_chrome_fallback) == 1
 
 
+def test_download_invoices_deduplicates_multi_item_orders(
+    fake_b2b_vat_csv_factory: Callable[[Sequence[Mapping[str, str]]], Path],
+    tmp_path: Path,
+) -> None:
+    """Multi-item rows sharing the same invoice number are downloaded only once."""
+    rows = [
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-MULTI-1",
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "DE123",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "DE",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "10.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "SHARED-INV-01",
+            ColumnHeader.INVOICE_URL.value: "https://amazon.fr/doc/shared_01",
+        },
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-MULTI-1",  # Second item in same order
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "DE123",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "DE",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "15.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "SHARED-INV-01",  # Same invoice #
+            ColumnHeader.INVOICE_URL.value: "https://amazon.fr/doc/shared_01",
+        },
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-MULTI-2",
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "IT999",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "IT",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "30.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "DISTINCT-INV-02",
+            ColumnHeader.INVOICE_URL.value: "https://amazon.fr/doc/distinct_02",
+        },
+    ]
+    report_file = fake_b2b_vat_csv_factory(rows)
+    out_dir = tmp_path / "dedup_invoices"
+
+    mock_response = MagicMock()
+    mock_response.headers.get.return_value = "application/pdf"
+    mock_response.geturl.return_value = "https://amazon.fr/doc/download"
+    mock_response.read.return_value = b"%PDF-1.4 Mock PDF"
+    mock_response.__enter__.return_value = mock_response
+
+    mock_opener = MagicMock()
+    mock_opener.open.return_value = mock_response
+
+    with (
+        patch("urllib.request.build_opener", return_value=mock_opener),
+        patch(
+            "b2b_vat.engine.extract_browser_cookies",
+            return_value=(http.cookiejar.CookieJar(), "chrome"),
+        ),
+    ):
+        result = download_invoices_for_report(report_file, out_dir)
+
+    # 3 total transactions matched in CSV, but only 2 unique invoice files downloaded
+    assert result.total_transactions_covered == 3
+    assert result.total_invoices_found == 2
+    assert result.successful_downloads == 2
+    assert mock_opener.open.call_count == 2
+    assert (out_dir / "SHARED-INV-01.pdf").exists()
+    assert (out_dir / "DISTINCT-INV-02.pdf").exists()
+    assert len(list(out_dir.glob("*.pdf"))) == 2
+
+
 def test_domain_exceptions_inheritance(tmp_path: Path) -> None:
     """Verify domain exceptions subclass both B2BVATError and standard Python errors."""
     # 1. Non-existent file

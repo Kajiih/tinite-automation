@@ -205,6 +205,7 @@ class InvoiceDownloadResult:
     successful_downloads: int
     failed_downloads: int
     downloaded_files: list[Path] = field(default_factory=list)
+    total_transactions_covered: int = 0
 
 
 def _parse_decimal_value(raw_value: object) -> float:
@@ -841,6 +842,24 @@ def _build_http_opener(
     )
 
 
+def _deduplicate_invoices(
+    transactions: Sequence[B2BTransactionRow],
+) -> list[B2BTransactionRow]:
+    """Filter transactions to retain the first occurrence for each unique invoice document."""
+    unique: list[B2BTransactionRow] = []
+    seen_doc_keys: set[str] = set()
+    for tx in transactions:
+        doc_key = (
+            tx.invoice_number.strip().upper()
+            if tx.invoice_number and tx.invoice_number.strip()
+            else (tx.invoice_url.strip() if tx.invoice_url else tx.order_id.strip())
+        )
+        if doc_key not in seen_doc_keys:
+            seen_doc_keys.add(doc_key)
+            unique.append(tx)
+    return unique
+
+
 def download_invoices_for_report(
     report_path: Path,
     output_dir: Path,
@@ -867,7 +886,7 @@ def download_invoices_for_report(
     ]
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    total_count = len(valid_transactions)
+    total_matched_rows = len(valid_transactions)
 
     if not valid_transactions:
         if progress_callback:
@@ -882,7 +901,11 @@ def download_invoices_for_report(
             total_invoices_found=0,
             successful_downloads=0,
             failed_downloads=0,
+            total_transactions_covered=0,
         )
+
+    unique_invoices = _deduplicate_invoices(valid_transactions)
+    total_unique_count = len(unique_invoices)
 
     opener, resolved_browser = _build_http_opener(
         browser=browser,
@@ -895,7 +918,8 @@ def download_invoices_for_report(
         progress_callback(
             InvoiceDownloadEvent(
                 phase=DownloadPhase.STARTING,
-                total=total_count,
+                total=total_unique_count,
+                current=total_matched_rows,
                 message=str(output_dir),
             )
         )
@@ -908,14 +932,14 @@ def download_invoices_for_report(
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     )
 
-    for idx, tx in enumerate(valid_transactions, start=1):
+    for idx, tx in enumerate(unique_invoices, start=1):
         doc_name = f"{tx.invoice_number}.pdf" if tx.invoice_number else f"invoice_{tx.order_id}.pdf"
         if progress_callback:
             progress_callback(
                 InvoiceDownloadEvent(
                     phase=DownloadPhase.DOWNLOADING,
                     current=idx,
-                    total=total_count,
+                    total=total_unique_count,
                     order_id=tx.order_id,
                     filename=doc_name,
                 )
@@ -939,7 +963,7 @@ def download_invoices_for_report(
                     InvoiceDownloadEvent(
                         phase=DownloadPhase.SAVED,
                         current=idx,
-                        total=total_count,
+                        total=total_unique_count,
                         order_id=tx.order_id,
                         filename=doc_name,
                         size_bytes=file_size,
@@ -952,17 +976,18 @@ def download_invoices_for_report(
                     InvoiceDownloadEvent(
                         phase=DownloadPhase.AUTH_FAILED,
                         current=idx,
-                        total=total_count,
+                        total=total_unique_count,
                         order_id=tx.order_id,
                         filename=doc_name,
                     )
                 )
 
     return InvoiceDownloadResult(
-        total_invoices_found=total_count,
+        total_invoices_found=total_unique_count,
         successful_downloads=successful,
         failed_downloads=failed,
         downloaded_files=downloaded_paths,
+        total_transactions_covered=total_matched_rows,
     )
 
 
@@ -1010,7 +1035,17 @@ def _cli_progress_callback(event: InvoiceDownloadEvent) -> None:
     elif event.phase == DownloadPhase.COOKIES:
         print(f"  [2/3] {event.message}...", flush=True)
     elif event.phase == DownloadPhase.STARTING:
-        print(f"  [3/3] Downloading {event.total} invoice(s) into: {event.message}\n", flush=True)
+        if event.current > 0 and event.current != event.total:
+            print(
+                f"  [3/3] Downloading {event.total} unique invoice(s) "
+                f"(covering {event.current} transaction rows) into: {event.message}\n",
+                flush=True,
+            )
+        else:
+            print(
+                f"  [3/3] Downloading {event.total} invoice(s) into: {event.message}\n",
+                flush=True,
+            )
     elif event.phase == DownloadPhase.DOWNLOADING:
         prefix = (
             f"    [{event.current}/{event.total}] Order {event.order_id} ({event.filename})... "
@@ -1048,10 +1083,16 @@ def _handle_download_invoices_command(args: argparse.Namespace) -> None:
     print("\n" + "=" * HEADER_BANNER_LENGTH)
     print("  AMAZON B2B INVOICE DOWNLOAD SUMMARY")
     print("=" * HEADER_BANNER_LENGTH)
-    print(f"  Total Invoices Found: {dl_res.total_invoices_found}")
-    print(f"  Successfully Saved:   {dl_res.successful_downloads}")
-    print(f"  Failed / Skipped:     {dl_res.failed_downloads}")
-    print(f"  Output Directory:     {target_out_dir}")
+    if dl_res.total_transactions_covered > dl_res.total_invoices_found:
+        print(
+            f"  Total Unique Invoices: {dl_res.total_invoices_found} "
+            f"(covering {dl_res.total_transactions_covered} transactions)"
+        )
+    else:
+        print(f"  Total Unique Invoices: {dl_res.total_invoices_found}")
+    print(f"  Successfully Saved:    {dl_res.successful_downloads}")
+    print(f"  Failed / Skipped:      {dl_res.failed_downloads}")
+    print(f"  Output Directory:      {target_out_dir}")
     print("=" * HEADER_BANNER_LENGTH)
 
     if dl_res.failed_downloads > 0 and dl_res.successful_downloads == 0:
