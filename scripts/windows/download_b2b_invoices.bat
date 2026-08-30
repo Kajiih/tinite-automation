@@ -40,7 +40,7 @@ if not exist "!CSV_PATH!" (
     exit /b 1
 )
 
-:: Call main repository bootstrap with download-invoices command
-call "!REPO_ROOT!\run.bat" b2b-vat download-invoices -r "!CSV_PATH!"
+:: Call main repository bootstrap with invoice-downloader command
+call "!REPO_ROOT!\run.bat" invoice-downloader -r "!CSV_PATH!"
 echo.
 pause

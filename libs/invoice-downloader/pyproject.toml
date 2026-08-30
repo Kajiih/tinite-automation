@@ -3,22 +3,28 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "b2b-vat"
+name = "invoice-downloader"
 dynamic = ["version"]
-description = "Amazon VAT Report B2B Intra-EU Transaction Filtering & Aggregation Engine"
+description = "Amazon Seller Central Invoice Downloader with Multi-Browser Session Auto-Detection"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "b2b-vat",
+    "browser-cookie3>=0.19.1",
+]
 
 [tool.hatch.version]
 path = "../../pyproject.toml"
 pattern = 'version = "(?P<version>[^"]+)"'
 
+[tool.uv.sources]
+b2b-vat = { workspace = true }
+
 [project.scripts]
-b2b-vat = "b2b_vat.engine:main"
+invoice-downloader = "invoice_downloader.engine:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/b2b_vat"]
+packages = ["src/invoice_downloader"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

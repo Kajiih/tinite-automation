@@ -1,6 +1,6 @@
 # B2B Intra-EU VAT Automation (`b2b-vat`)
 
-Pure Python domain library and CLI to filter and aggregate zero-rated cross-border B2B transactions from Amazon VAT reports, with automatic invoice PDF downloading.
+Pure Python domain library and CLI to filter and aggregate zero-rated cross-border B2B transactions from Amazon VAT reports.
 
 ## Filtering Rules
 
@@ -16,22 +16,19 @@ Pure Python domain library and CLI to filter and aggregate zero-rated cross-bord
 
 ## CLI Usage
 
-### Process Report and Export Summaries
 ```bash
-uv run b2b-vat process \
-  --report "path/to/report.csv" \
-  --departure "FR" \
-  --output-summary "summary.csv" \
-  --output-transactions "transactions.csv"
+# Process report and display summary table in terminal:
+uv run b2b-vat -r "path/to/report.csv"
+
+# Process report with custom departure country and CSV exports:
+uv run b2b-vat \
+  -r "path/to/report.csv" \
+  -d "FR" \
+  -s "summary.csv" \
+  -t "transactions.csv"
 ```
 
-### Download Invoices (with browser auto-detection)
-```bash
-# Automatically finds your active Amazon Seller Central session across installed browsers:
-uv run b2b-vat download-invoices -r "path/to/report.csv"
-
-# Or explicitly select a browser / override cookies:
-uv run b2b-vat download-invoices -r "path/to/report.csv" --browser edge
-uv run b2b-vat download-invoices -r "path/to/report.csv" --browser firefox
-uv run b2b-vat download-invoices -r "path/to/report.csv" --cookies "session-id=..."
-```
+> To download invoice PDFs, use the companion package `invoice-downloader`:
+> ```bash
+> uv run invoice-downloader -r "path/to/report.csv"
+> ```

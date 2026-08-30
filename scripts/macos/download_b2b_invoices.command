@@ -35,6 +35,6 @@ if [ -z "$CSV_PATH" ] || [ ! -f "$CSV_PATH" ]; then
     exit 1
 fi
 
-"$REPO_ROOT/run.command" b2b-vat download-invoices -r "$CSV_PATH"
+"$REPO_ROOT/run.command" invoice-downloader -r "$CSV_PATH"
 echo ""
 read -r -p "Appuyez sur Entrée pour quitter..."

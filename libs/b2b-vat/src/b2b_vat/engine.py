@@ -15,20 +15,14 @@ from __future__ import annotations
 
 import argparse
 import csv
-import http.cookiejar
 import logging
 import sys
-import urllib.error
-import urllib.request
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
-
-import browser_cookie3
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableSequence, Sequence
@@ -131,7 +125,7 @@ class B2BProcessingResult:
 
 
 # ---------------------------------------------------------------------------
-# Domain Exceptions (Grounding: requests.exceptions, urllib3.exceptions)
+# Domain Exceptions
 # ---------------------------------------------------------------------------
 
 
@@ -149,63 +143,6 @@ class ReportPathIsDirectoryError(B2BVATError, ValueError):
 
 class InvalidReportFormatError(B2BVATError, ValueError):
     """Raised when required headers or data rows in the VAT report are invalid."""
-
-
-class InvoiceDownloadError(B2BVATError):
-    """Base domain exception for invoice downloading errors."""
-
-
-class UnsupportedBrowserError(InvoiceDownloadError, ValueError):
-    """Raised when an unsupported browser name is requested for cookie extraction."""
-
-
-class AuthenticationRequiredError(InvoiceDownloadError):
-    """Raised when an Amazon Seller Central session is unauthenticated or expired."""
-
-
-# ---------------------------------------------------------------------------
-# Observable Progress Events (Grounding: huggingface_hub, pip.utils.logging)
-# ---------------------------------------------------------------------------
-
-
-class DownloadPhase(StrEnum):
-    """Lifecycle phase of an invoice download process."""
-
-    SCANNING = "SCANNING"
-    COOKIES = "COOKIES"
-    STARTING = "STARTING"
-    DOWNLOADING = "DOWNLOADING"
-    SAVED = "SAVED"
-    AUTH_FAILED = "AUTH_FAILED"
-    FAILED = "FAILED"
-    COMPLETED = "COMPLETED"
-
-
-@dataclass(frozen=True, slots=True)
-class InvoiceDownloadEvent:
-    """Event emitted during the invoice downloading lifecycle."""
-
-    phase: DownloadPhase
-    current: int = 0
-    total: int = 0
-    order_id: str = ""
-    filename: str = ""
-    size_bytes: int = 0
-    message: str = ""
-
-
-InvoiceProgressCallback = Callable[[InvoiceDownloadEvent], None]
-
-
-@dataclass(slots=True)
-class InvoiceDownloadResult:
-    """Summary metrics of an invoice download operation."""
-
-    total_invoices_found: int
-    successful_downloads: int
-    failed_downloads: int
-    downloaded_files: list[Path] = field(default_factory=list)
-    total_transactions_covered: int = 0
 
 
 def _parse_decimal_value(raw_value: object) -> float:
@@ -603,396 +540,48 @@ def format_b2b_summary_table(summaries: Sequence[B2BVATSummary]) -> str:
     return "\n".join(table_lines)
 
 
-DEFAULT_AMAZON_DOMAINS: tuple[str, ...] = (
-    "amazon.fr",
-    "amazon.de",
-    "amazon.it",
-    "amazon.es",
-    "amazon.com.be",
-    "sellercentral.amazon.fr",
-    "sellercentral.amazon.de",
-    "sellercentral.amazon.it",
-    "sellercentral.amazon.es",
-    "sellercentral.amazon.com.be",
-)
-
-
-BROWSER_CANDIDATES: tuple[str, ...] = (
-    "chrome",
-    "firefox",
-    "edge",
-    "brave",
-    "arc",
-    "opera",
-    "vivaldi",
-    "safari",
-)
-
-
-def _extract_from_browser_name(
-    browser_name: str,
-    domains: Sequence[str],
-) -> http.cookiejar.CookieJar:
-    """Extract cookies from a specific browser engine."""
-    browser_map = {
-        "chrome": browser_cookie3.chrome,
-        "firefox": browser_cookie3.firefox,
-        "edge": browser_cookie3.edge,
-        "brave": browser_cookie3.brave,
-        "arc": browser_cookie3.arc,
-        "safari": browser_cookie3.safari,
-        "opera": browser_cookie3.opera,
-        "vivaldi": browser_cookie3.vivaldi,
-        "chromium": browser_cookie3.chromium,
-    }
-
-    loader = browser_map.get(browser_name.lower().strip())
-    if loader is None:
-        valid_opts = ", ".join(sorted(BROWSER_CANDIDATES))
-        msg = f"Unsupported browser '{browser_name}'. Valid options: {valid_opts}, auto"
-        raise UnsupportedBrowserError(msg)
-
-    jar = http.cookiejar.CookieJar()
-    # Try broad domain queries first
-    for query in ("amazon", "sellercentral", ""):
-        try:
-            query_jar = loader(domain_name=query)
-            for cookie in query_jar:
-                jar.set_cookie(cookie)
-            if len(jar) > 0:
-                return jar
-        except (browser_cookie3.BrowserCookieError, OSError, ValueError) as err:
-            logger.debug("Failed extracting %s cookies from %s: %s", query, browser_name, err)
-
-    for domain in domains:
-        try:
-            domain_jar = loader(domain_name=domain)
-            for cookie in domain_jar:
-                jar.set_cookie(cookie)
-        except (browser_cookie3.BrowserCookieError, OSError, ValueError) as err:
-            logger.debug("Failed extracting cookies from %s for %s: %s", browser_name, domain, err)
-
-    return jar
-
-
-def extract_browser_cookies(
-    browser: str = "auto",
-    domains: Sequence[str] = DEFAULT_AMAZON_DOMAINS,
-) -> tuple[http.cookiejar.CookieJar, str]:
-    """Extract Amazon Seller Central session cookies with automatic fallback.
-
-    Args:
-        browser: Browser name ('auto', 'chrome', 'firefox', 'edge', 'brave', 'arc', 'safari').
-        domains: Target domain names to search cookies for.
-
-    Returns:
-        Tuple of (CookieJar containing extracted cookies, name of detected browser).
-
-    Raises:
-        UnsupportedBrowserError: If an explicitly requested browser name is invalid.
-    """
-    req_browser = browser.lower().strip()
-    if req_browser == "auto":
-        candidates = BROWSER_CANDIDATES
-    else:
-        if req_browser not in {
-            "chrome",
-            "firefox",
-            "edge",
-            "brave",
-            "arc",
-            "safari",
-            "opera",
-            "vivaldi",
-            "chromium",
-        }:
-            valid_opts = ", ".join(sorted(BROWSER_CANDIDATES))
-            msg = f"Unsupported browser '{browser}'. Valid options: {valid_opts}, auto"
-            raise UnsupportedBrowserError(msg)
-        fallbacks = tuple(
-            b for b in ("firefox", "edge", "chrome", "brave", "arc", "safari") if b != req_browser
-        )
-        candidates = (req_browser, *fallbacks)
-
-    for candidate in candidates:
-        jar = _extract_from_browser_name(candidate, domains=domains)
-        if len(jar) > 0:
-            return jar, candidate
-
-    return http.cookiejar.CookieJar(), (req_browser if req_browser != "auto" else "none")
-
-
-def _download_single_invoice(
-    opener: urllib.request.OpenerDirector,
-    tx: B2BTransactionRow,
-    *,
-    output_dir: Path,
-    user_agent: str,
-    cookie_string: str | None,
-    browser: str,
-) -> Path | None:
-    """Download a single transaction invoice and save to output_dir if authenticated."""
-    if not (tx.invoice_url.startswith("https://") or tx.invoice_url.startswith("http://")):
-        logger.warning("Skipping invalid invoice URL scheme for order %s", tx.order_id)
-        return None
-
-    doc_filename = f"{tx.invoice_number}.pdf" if tx.invoice_number else f"invoice_{tx.order_id}.pdf"
-    target_file = output_dir / doc_filename
-
-    headers = {
-        "User-Agent": user_agent,
-        "Accept": "application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Upgrade-Insecure-Requests": "1",
-    }
-    req = urllib.request.Request(  # ruff: ignore[suspicious-url-open-usage]
-        tx.invoice_url,
-        headers=headers,
+def create_cli_parser() -> argparse.ArgumentParser:
+    """Construct CLI argument parser for b2b-vat."""
+    parser = argparse.ArgumentParser(
+        prog="b2b-vat",
+        description="Amazon B2B Intra-EU VAT Report Transaction Filtering & Aggregation CLI.",
     )
-    if cookie_string:
-        req.add_header("Cookie", cookie_string)
-
-    try:
-        with opener.open(req, timeout=30) as response:
-            content_type = response.headers.get("Content-Type", "")
-            final_url = response.geturl()
-            body = response.read()
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        logger.warning("Failed downloading invoice for order %s: %s", tx.order_id, exc)
-        return None
-
-    if "signin" in final_url or "ap/signin" in final_url:
-        logger.warning(
-            "Auth required for order %s (%s). Please log in via %s.",
-            tx.order_id,
-            doc_filename,
-            browser,
-        )
-        return None
-
-    if body.startswith(b"%PDF") or "application/pdf" in content_type:
-        target_file.write_bytes(body)
-        return target_file
-
-    logger.warning(
-        "Non-PDF content for order %s (%s). Type: %s. Not authenticated.",
-        tx.order_id,
-        doc_filename,
-        content_type,
+    parser.add_argument(
+        "-r",
+        "--report",
+        type=Path,
+        required=True,
+        help="Path to the Amazon VAT / Monthly transaction report CSV.",
     )
-    return None
-
-
-def _build_http_opener(
-    *,
-    browser: str,
-    cookie_string: str | None,
-    cookie_file: Path | None,
-    progress_callback: InvoiceProgressCallback | None,
-) -> tuple[urllib.request.OpenerDirector, str]:
-    """Build and configure urllib HTTP opener with session cookies."""
-    if cookie_file and cookie_file.exists():
-        if progress_callback:
-            progress_callback(
-                InvoiceDownloadEvent(
-                    phase=DownloadPhase.COOKIES,
-                    message=f"Loading cookies from file: {cookie_file}",
-                )
-            )
-        jar: http.cookiejar.CookieJar = http.cookiejar.MozillaCookieJar(cookie_file)
-        jar.load(ignore_discard=True, ignore_expires=True)  # type: ignore[attr-defined]
-        return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)), "cookie_file"
-
-    if cookie_string:
-        if progress_callback:
-            progress_callback(
-                InvoiceDownloadEvent(
-                    phase=DownloadPhase.COOKIES,
-                    message="Using provided cookie header string",
-                )
-            )
-        return urllib.request.build_opener(), "header_string"
-
-    if progress_callback:
-        progress_callback(
-            InvoiceDownloadEvent(
-                phase=DownloadPhase.COOKIES,
-                message=(
-                    "Auto-detecting Amazon browser session..."
-                    if browser == "auto"
-                    else f"Extracting cookies from '{browser}' (with auto-fallback)..."
-                ),
-            )
-        )
-    extracted_jar, resolved_browser = extract_browser_cookies(browser=browser)
-    if progress_callback and len(extracted_jar) > 0:
-        progress_callback(
-            InvoiceDownloadEvent(
-                phase=DownloadPhase.COOKIES,
-                message=f"Found {len(extracted_jar)} cookie(s) from '{resolved_browser}'",
-            )
-        )
-
-    return (
-        urllib.request.build_opener(urllib.request.HTTPCookieProcessor(extracted_jar)),
-        resolved_browser,
+    parser.add_argument(
+        "-d",
+        "--departure",
+        type=str,
+        default=DEFAULT_DEPARTURE_COUNTRY,
+        help=f"Departure country for filtering (default: {DEFAULT_DEPARTURE_COUNTRY}).",
     )
-
-
-def _deduplicate_invoices(
-    transactions: Sequence[B2BTransactionRow],
-) -> list[B2BTransactionRow]:
-    """Filter transactions to retain the first occurrence for each unique invoice document."""
-    unique: list[B2BTransactionRow] = []
-    seen_doc_keys: set[str] = set()
-    for tx in transactions:
-        doc_key = (
-            tx.invoice_number.strip().upper()
-            if tx.invoice_number and tx.invoice_number.strip()
-            else (tx.invoice_url.strip() if tx.invoice_url else tx.order_id.strip())
-        )
-        if doc_key not in seen_doc_keys:
-            seen_doc_keys.add(doc_key)
-            unique.append(tx)
-    return unique
-
-
-def download_invoices_for_report(
-    report_path: Path,
-    output_dir: Path,
-    *,
-    departure_country: str = DEFAULT_DEPARTURE_COUNTRY,
-    browser: str = "auto",
-    cookie_string: str | None = None,
-    cookie_file: Path | None = None,
-    progress_callback: InvoiceProgressCallback | None = None,
-) -> InvoiceDownloadResult:
-    """Scan report, filter B2B cross-border transactions, and download invoice PDFs."""
-    if progress_callback:
-        progress_callback(
-            InvoiceDownloadEvent(
-                phase=DownloadPhase.SCANNING,
-                filename=report_path.name,
-                message=f"Scanning report: {report_path.name}",
-            )
-        )
-
-    result = process_b2b_vat_report(report_path, departure_country=departure_country)
-    valid_transactions = [
-        tx for tx in result.transactions if tx.invoice_url and tx.invoice_url.strip()
-    ]
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    total_matched_rows = len(valid_transactions)
-
-    if not valid_transactions:
-        if progress_callback:
-            progress_callback(
-                InvoiceDownloadEvent(
-                    phase=DownloadPhase.COMPLETED,
-                    total=0,
-                    message="No matching B2B transactions with invoice URLs found.",
-                )
-            )
-        return InvoiceDownloadResult(
-            total_invoices_found=0,
-            successful_downloads=0,
-            failed_downloads=0,
-            total_transactions_covered=0,
-        )
-
-    unique_invoices = _deduplicate_invoices(valid_transactions)
-    total_unique_count = len(unique_invoices)
-
-    opener, resolved_browser = _build_http_opener(
-        browser=browser,
-        cookie_string=cookie_string,
-        cookie_file=cookie_file,
-        progress_callback=progress_callback,
+    parser.add_argument(
+        "-s",
+        "--output-summary",
+        type=Path,
+        default=None,
+        help="Optional destination path to save the aggregated VAT summary CSV.",
     )
-
-    if progress_callback:
-        progress_callback(
-            InvoiceDownloadEvent(
-                phase=DownloadPhase.STARTING,
-                total=total_unique_count,
-                current=total_matched_rows,
-                message=str(output_dir),
-            )
-        )
-
-    successful = 0
-    failed = 0
-    downloaded_paths: list[Path] = []
-    user_agent = (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    parser.add_argument(
+        "-t",
+        "--output-transactions",
+        type=Path,
+        default=None,
+        help="Optional destination path to save filtered B2B transactions CSV.",
     )
-
-    for idx, tx in enumerate(unique_invoices, start=1):
-        doc_name = f"{tx.invoice_number}.pdf" if tx.invoice_number else f"invoice_{tx.order_id}.pdf"
-        if progress_callback:
-            progress_callback(
-                InvoiceDownloadEvent(
-                    phase=DownloadPhase.DOWNLOADING,
-                    current=idx,
-                    total=total_unique_count,
-                    order_id=tx.order_id,
-                    filename=doc_name,
-                )
-            )
-
-        saved_path = _download_single_invoice(
-            opener,
-            tx,
-            output_dir=output_dir,
-            user_agent=user_agent,
-            cookie_string=cookie_string,
-            browser=resolved_browser,
-        )
-
-        if saved_path is not None:
-            successful += 1
-            downloaded_paths.append(saved_path)
-            file_size = saved_path.stat().st_size
-            if progress_callback:
-                progress_callback(
-                    InvoiceDownloadEvent(
-                        phase=DownloadPhase.SAVED,
-                        current=idx,
-                        total=total_unique_count,
-                        order_id=tx.order_id,
-                        filename=doc_name,
-                        size_bytes=file_size,
-                    )
-                )
-        else:
-            failed += 1
-            if progress_callback:
-                progress_callback(
-                    InvoiceDownloadEvent(
-                        phase=DownloadPhase.AUTH_FAILED,
-                        current=idx,
-                        total=total_unique_count,
-                        order_id=tx.order_id,
-                        filename=doc_name,
-                    )
-                )
-
-    return InvoiceDownloadResult(
-        total_invoices_found=total_unique_count,
-        successful_downloads=successful,
-        failed_downloads=failed,
-        downloaded_files=downloaded_paths,
-        total_transactions_covered=total_matched_rows,
-    )
+    return parser
 
 
-def _handle_process_command(args: argparse.Namespace) -> None:
-    """Handle CLI process subcommand execution."""
+def main() -> None:
+    """CLI entry point for b2b-vat."""
+    parser = create_cli_parser()
+    args = parser.parse_args()
+
     try:
         result = process_b2b_vat_report(args.report, departure_country=args.departure)
     except B2BVATError as err:
@@ -1026,123 +615,6 @@ def _handle_process_command(args: argparse.Namespace) -> None:
     if args.output_transactions:
         export_b2b_transactions_csv(result.transactions, args.output_transactions)
         print(f"  [SAVED] Transactions exported to: {args.output_transactions}")
-
-
-def _cli_progress_callback(event: InvoiceDownloadEvent) -> None:
-    """Format and print real-time progress events to standard output."""
-    if event.phase == DownloadPhase.SCANNING:
-        print(f"\n  [1/3] Scanning VAT report: {event.filename}...", flush=True)
-    elif event.phase == DownloadPhase.COOKIES:
-        print(f"  [2/3] {event.message}...", flush=True)
-    elif event.phase == DownloadPhase.STARTING:
-        if event.current > 0 and event.current != event.total:
-            print(
-                f"  [3/3] Downloading {event.total} unique invoice(s) "
-                f"(covering {event.current} transaction rows) into: {event.message}\n",
-                flush=True,
-            )
-        else:
-            print(
-                f"  [3/3] Downloading {event.total} invoice(s) into: {event.message}\n",
-                flush=True,
-            )
-    elif event.phase == DownloadPhase.DOWNLOADING:
-        prefix = (
-            f"    [{event.current}/{event.total}] Order {event.order_id} ({event.filename})... "
-        )
-        print(prefix, end="", flush=True)
-    elif event.phase == DownloadPhase.SAVED:
-        size_kb = event.size_bytes / 1024
-        print(f"✅ Saved ({size_kb:.1f} KB)", flush=True)
-    elif event.phase == DownloadPhase.AUTH_FAILED:
-        print("❌ Failed (not logged in or session expired)", flush=True)
-    elif event.phase == DownloadPhase.FAILED:
-        print(f"❌ Failed ({event.message})", flush=True)
-
-
-def _handle_download_invoices_command(args: argparse.Namespace) -> None:
-    """Handle CLI download-invoices subcommand execution."""
-    target_out_dir = args.output_dir or (args.report.parent / f"{args.report.stem}_invoices")
-    try:
-        dl_res = download_invoices_for_report(
-            report_path=args.report,
-            output_dir=target_out_dir,
-            departure_country=args.departure,
-            browser=args.browser,
-            cookie_string=args.cookies,
-            cookie_file=args.cookie_file,
-            progress_callback=_cli_progress_callback,
-        )
-    except B2BVATError as err:
-        print(f"\n  [ERROR] {err}\n", file=sys.stderr)
-        sys.exit(1)
-    except OSError:
-        logger.exception("Unexpected system error during invoice downloading")
-        sys.exit(1)
-
-    print("\n" + "=" * HEADER_BANNER_LENGTH)
-    print("  AMAZON B2B INVOICE DOWNLOAD SUMMARY")
-    print("=" * HEADER_BANNER_LENGTH)
-    if dl_res.total_transactions_covered > dl_res.total_invoices_found:
-        print(
-            f"  Total Unique Invoices: {dl_res.total_invoices_found} "
-            f"(covering {dl_res.total_transactions_covered} transactions)"
-        )
-    else:
-        print(f"  Total Unique Invoices: {dl_res.total_invoices_found}")
-    print(f"  Successfully Saved:    {dl_res.successful_downloads}")
-    print(f"  Failed / Skipped:      {dl_res.failed_downloads}")
-    print(f"  Output Directory:      {target_out_dir}")
-    print("=" * HEADER_BANNER_LENGTH)
-
-    if dl_res.failed_downloads > 0 and dl_res.successful_downloads == 0:
-        print("\n  💡 Windows / Chrome Tip:")
-        print("     Chrome (127+) on Windows locks session cookies with App-Bound encryption.")
-        print("     Quick alternatives to download immediately:")
-        print("     1. Log in via Firefox or Edge and run:")
-        print("        uv run b2b-vat download-invoices -r <report> --browser edge")
-        print("        uv run b2b-vat download-invoices -r <report> --browser firefox")
-        print("     2. Or copy the Cookie header from DevTools (F12 -> Network):")
-        print('        uv run b2b-vat download-invoices -r <report> --cookies "session-id=..."\n')
-    else:
-        print()
-
-
-def main() -> None:
-    """CLI entry point for b2b-vat."""
-    logging.basicConfig(level=logging.INFO, format="  [%(levelname)s] %(message)s")
-    parser = argparse.ArgumentParser(
-        prog="b2b-vat",
-        description="Amazon B2B Intra-EU VAT Report & Invoice Automation CLI.",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True, help="Subcommand")
-
-    proc = subparsers.add_parser("process", help="Filter and aggregate B2B transactions")
-    proc.add_argument("-r", "--report", type=Path, required=True, help="Amazon VAT CSV report")
-    proc.add_argument("-d", "--departure", type=str, default=DEFAULT_DEPARTURE_COUNTRY)
-    proc.add_argument("-s", "--output-summary", type=Path, default=None)
-    proc.add_argument("-t", "--output-transactions", type=Path, default=None)
-
-    dl = subparsers.add_parser("download-invoices", help="Download B2B invoice PDFs to directory")
-    dl.add_argument("-r", "--report", type=Path, required=True, help="Amazon VAT CSV report")
-    dl.add_argument(
-        "-o",
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Destination directory (default: <report_name>_invoices/)",
-    )
-    dl.add_argument("-d", "--departure", type=str, default=DEFAULT_DEPARTURE_COUNTRY)
-    browser_help = "Browser for cookies: auto (default), chrome, firefox, edge, brave, arc, safari"
-    dl.add_argument("-b", "--browser", type=str, default="auto", help=browser_help)
-    dl.add_argument("--cookies", type=str, default=None, help="Raw cookie header override")
-    dl.add_argument("--cookie-file", type=Path, default=None, help="Path to cookie file")
-
-    args = parser.parse_args()
-    if args.command == "process":
-        _handle_process_command(args)
-    elif args.command == "download-invoices":
-        _handle_download_invoices_command(args)
 
 
 if __name__ == "__main__":
