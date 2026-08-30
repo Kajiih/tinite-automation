@@ -25,6 +25,18 @@ logger: logging.Logger = logging.getLogger(__name__)
 GITHUB_REPO_ARCHIVE_URL: str = (
     "https://github.com/Kajiih/tinite-automation/archive/refs/heads/main.zip"
 )
+TINITE_AUTOMATION_ENABLE_GIT_UPDATE_ENV: str = "TINITE_AUTOMATION_ENABLE_GIT_UPDATE"
+USER_AGENT: str = "Tinite-Automation-Updater"
+
+
+def _is_git_update_enabled(*, enable_git: bool | None = None) -> bool:
+    """Determine whether Git-based updates are enabled via argument or environment variable."""
+    if enable_git is not None:
+        return enable_git
+    raw = os.environ.get(TINITE_AUTOMATION_ENABLE_GIT_UPDATE_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 @dataclass(slots=True)
@@ -119,7 +131,7 @@ def _fetch_github_api_sha() -> str:
         req = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "Tinite-Automation-Updater",
+                "User-Agent": USER_AGENT,
                 "Accept": "application/vnd.github.v3+json",
             },
         )
@@ -161,7 +173,7 @@ def _fetch_remote_pyproject_version() -> str:
     try:
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "Tinite-Automation-Updater"},
+            headers={"User-Agent": USER_AGENT},
         )
         with urllib.request.urlopen(req, timeout=5) as response:  # ruff: ignore[suspicious-url-open-usage]
             parsed = tomllib.loads(response.read().decode("utf-8"))
@@ -180,27 +192,35 @@ class UpdateCheckResult(TypedDict):
     remote_sha: str
 
 
-def check_update_available(repo_root: Path | None = None) -> UpdateCheckResult:
+def check_update_available(
+    repo_root: Path | None = None,
+    *,
+    enable_git: bool | None = None,
+) -> UpdateCheckResult:
     """Check whether a newer version or commit is available on the remote repository.
 
     Args:
         repo_root: Optional workspace repository root Path.
+        enable_git: Flag to enable Git-based version checks. Defaults to True (or
+            reads TINITE_AUTOMATION_ENABLE_GIT_UPDATE env var if set).
 
     Returns:
         UpdateCheckResult containing version, update_available, local_sha, remote_sha.
     """
+    is_git_enabled = _is_git_update_enabled(enable_git=enable_git)
+
     resolved_root = resolve_workspace_root(repo_root)
     git_dir = resolved_root / ".git"
     git_path = shutil.which("git")
-    is_git_repo = git_dir.is_dir() and git_path is not None
+    is_git_repo = is_git_enabled and git_dir.is_dir() and git_path is not None
 
     local_sha = _get_local_git_sha(git_path, resolved_root) if is_git_repo and git_path else ""
     remote_sha = _get_remote_git_sha(git_path, resolved_root) if is_git_repo and git_path else ""
 
-    if not remote_sha:
+    if not remote_sha and is_git_enabled:
         remote_sha = _fetch_github_api_sha()
 
-    if not local_sha:
+    if not local_sha and is_git_enabled:
         version_file = resolved_root / ".version_sha"
         if version_file.is_file():
             local_sha = version_file.read_text(encoding="utf-8").strip()
@@ -210,9 +230,10 @@ def check_update_available(repo_root: Path | None = None) -> UpdateCheckResult:
     if is_git_repo and remote_sha and git_path:
         is_already_contained = _is_ancestor_commit(git_path, resolved_root, remote_sha)
         update_available = not is_already_contained
-    elif local_sha and remote_sha:
+    elif is_git_enabled and local_sha and remote_sha:
         update_available = local_sha != remote_sha
     else:
+        # Default SemVer-based comparison
         remote_version = _fetch_remote_pyproject_version()
         local_tuple = _parse_version_tuple(local_version or "")
         remote_tuple = _parse_version_tuple(remote_version)
@@ -226,8 +247,12 @@ def check_update_available(repo_root: Path | None = None) -> UpdateCheckResult:
     }
 
 
-def _update_git_source(git_path: str, resolved_root: Path) -> None:
-    """Pull latest source changes using git fast-forward."""
+def _update_git_source(git_path: str, resolved_root: Path) -> bool:
+    """Pull latest source changes using git fast-forward.
+
+    Returns:
+        True if git pull or fallback archive update succeeded, False otherwise.
+    """
     try:
         logger.info("Executing 'git pull origin main --ff-only'...")
         exec_res = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
@@ -238,12 +263,13 @@ def _update_git_source(git_path: str, resolved_root: Path) -> None:
             timeout=30,
             check=False,
         )
-        if exec_res.returncode != 0:
-            logger.warning("git pull failed: %s", exec_res.stderr)
-            _update_from_github_archive(resolved_root)
+        if exec_res.returncode == 0:
+            return True
+        logger.warning("git pull failed: %s", exec_res.stderr)
+        return _update_from_github_archive(resolved_root)
     except (OSError, subprocess.SubprocessError) as err:
         logger.warning("Git pull exception: %s. Falling back to archive download.", err)
-        _update_from_github_archive(resolved_root)
+        return _update_from_github_archive(resolved_root)
 
 
 def _sync_uv_dependencies(resolved_root: Path) -> None:
@@ -269,28 +295,44 @@ def _sync_uv_dependencies(resolved_root: Path) -> None:
             logger.warning("uv sync warning: %s", err)
 
 
-def perform_app_update(repo_root: Path | None = None) -> UpdateResult:
+def perform_app_update(
+    repo_root: Path | None = None,
+    *,
+    enable_git: bool | None = None,
+) -> UpdateResult:
     """Execute the application update routine.
 
-    1. Pulls latest source code (via git pull or GitHub ZIP fallback).
-    2. Runs `uv sync --no-dev` to update lockfile and dependencies.
+    1. Pulls latest source code (via git pull if enable_git is True, otherwise archive download).
+    2. Runs `uv sync --no-dev` to update lockfile and dependencies if source update succeeded.
 
     Args:
         repo_root: Optional workspace repository root Path.
+        enable_git: Flag to enable Git pull. Defaults to True (or reads
+            TINITE_AUTOMATION_ENABLE_GIT_UPDATE env var).
 
     Returns:
         UpdateResult with success boolean and outcome message.
     """
+    is_git_enabled = _is_git_update_enabled(enable_git=enable_git)
     resolved_root = resolve_workspace_root(repo_root)
     logger.info("Starting application update for repository at: %s", resolved_root)
     git_dir = resolved_root / ".git"
     git_path = shutil.which("git")
 
-    if git_dir.is_dir() and git_path is not None:
-        _update_git_source(git_path, resolved_root)
+    if is_git_enabled and git_dir.is_dir() and git_path is not None:
+        source_updated = _update_git_source(git_path, resolved_root)
     else:
-        logger.info("Git repository not detected or git binary missing. Using archive download.")
-        _update_from_github_archive(resolved_root)
+        logger.info("Using archive download for application update.")
+        source_updated = _update_from_github_archive(resolved_root)
+
+    if not source_updated:
+        return UpdateResult(
+            success=False,
+            message=(
+                "Application update failed. "
+                "Please check network connectivity or git repository status."
+            ),
+        )
 
     _sync_uv_dependencies(resolved_root)
 
@@ -302,6 +344,7 @@ def perform_app_update(repo_root: Path | None = None) -> UpdateResult:
 
 def _extract_zip_contents(zip_bytes: bytes, repo_root: Path) -> None:
     """Extract zip archive files while ignoring version control and cache directories."""
+    resolved_root = repo_root.resolve()
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         root_prefix = zf.namelist()[0].split("/")[0] + "/"
         for member in zf.namelist():
@@ -311,7 +354,11 @@ def _extract_zip_contents(zip_bytes: bytes, repo_root: Path) -> None:
             if not relative_path or relative_path.startswith((".git", ".venv", ".pytest_cache")):
                 continue
 
-            target_file = repo_root / relative_path
+            target_file = (repo_root / relative_path).resolve()
+            if not target_file.is_relative_to(resolved_root):
+                logger.warning("Skipping unsafe zip entry outside repository root: %s", member)
+                continue
+
             if member.endswith("/"):
                 target_file.mkdir(parents=True, exist_ok=True)
             else:
@@ -323,7 +370,7 @@ def _download_github_archive() -> bytes:
     """Fetch repository archive zip bytes from GitHub."""
     req = urllib.request.Request(
         GITHUB_REPO_ARCHIVE_URL,
-        headers={"User-Agent": "Amazon-Automation-WebHub-Updater"},
+        headers={"User-Agent": USER_AGENT},
     )
     with urllib.request.urlopen(req, timeout=30) as response:  # ruff: ignore[suspicious-url-open-usage]
         data = response.read()
@@ -332,22 +379,26 @@ def _download_github_archive() -> bytes:
         return bytes(data)
 
 
-def _update_from_github_archive(repo_root: Path, remote_sha: str = "") -> None:
+def _update_from_github_archive(repo_root: Path, remote_sha: str = "") -> bool:
     """Download and extract GitHub repository zip archive as a fallback.
 
     Args:
         repo_root: Path to destination repository directory.
         remote_sha: Optional remote commit SHA to write into .version_sha.
+
+    Returns:
+        True if the download and extraction succeeded, False otherwise.
     """
     if not GITHUB_REPO_ARCHIVE_URL.startswith("https://"):
-        return
+        return False
     try:
         zip_bytes = _download_github_archive()
         _extract_zip_contents(zip_bytes, repo_root)
     except (urllib.error.URLError, zipfile.BadZipFile, OSError) as err:
         logger.warning("GitHub archive download/extract error: %s", err)
-        return
+        return False
 
     latest_sha = remote_sha or _fetch_github_api_sha()
     if latest_sha:
         (repo_root / ".version_sha").write_text(latest_sha.strip() + "\n", encoding="utf-8")
+    return True
