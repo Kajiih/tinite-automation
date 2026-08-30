@@ -1,6 +1,6 @@
 [project]
 name = "tinite-automation"
-version = "0.2.3"
+version = "0.2.4"
 description = "Tinite Automation - Amazon VAT Transaction Reporting and ASIN Asset Automation Monorepo"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -41,53 +41,53 @@ target-version = "py312"
 line-length = 100
 fix = true
 
-[tool.ruff.lint]
-select = ["ALL"]
-preview = true
-pydocstyle.convention = "google"
+    [tool.ruff.lint]
+    select = ["ALL"]
+    preview = true
+    pydocstyle.convention = "google"
 
-ignore = [
-    "CPY",                         # Missing copyright header
-    "missing-trailing-comma",      # Trailing comma (conflicts with formatter)
-    "undocumented-public-init",    # __init__ missing docstring
-    "missing-todo-author",         # Missing author in TODO
-    "line-contains-todo",          # Line contains TODO
-    "TD",                          # Todo formatting
-    "undocumented-public-module",  # Missing docstring in public module
-    "undocumented-public-package", # Missing docstring in public package
-    "implicit-namespace-package",  # Implicit namespace package
-    "print",                       # print found
-]
-per-file-ignores = { "**/tests/**/*.py" = [
-    "assert",
-    "magic-value-comparison",
-    "undocumented-public-class",
-    "undocumented-public-method",
-    "undocumented-public-function",
-    "missing-return-type-undocumented-public-function",
-    "missing-type-function-argument",
-    "unused-method-argument",
-    "too-many-arguments",
-    "too-many-positional-arguments",
-] }
-future-annotations = true
+    ignore = [
+        "CPY",                         # Missing copyright header
+        "missing-trailing-comma",      # Trailing comma (conflicts with formatter)
+        "undocumented-public-init",    # __init__ missing docstring
+        "missing-todo-author",         # Missing author in TODO
+        "line-contains-todo",          # Line contains TODO
+        "TD",                          # Todo formatting
+        "undocumented-public-module",  # Missing docstring in public module
+        "undocumented-public-package", # Missing docstring in public package
+        "implicit-namespace-package",  # Implicit namespace package
+        "print",                       # print found
+    ]
+    per-file-ignores = { "**/tests/**/*.py" = [
+        "assert",
+        "magic-value-comparison",
+        "undocumented-public-class",
+        "undocumented-public-method",
+        "undocumented-public-function",
+        "missing-return-type-undocumented-public-function",
+        "missing-type-function-argument",
+        "unused-method-argument",
+        "too-many-arguments",
+        "too-many-positional-arguments",
+    ] }
+    future-annotations = true
 
-[tool.ruff.lint.flake8-annotations]
-mypy-init-return = true
+        [tool.ruff.lint.flake8-annotations]
+        mypy-init-return = true
 
-[tool.ruff.lint.pylint]
-max-args = 10
-max-positional-args = 5
+        [tool.ruff.lint.pylint]
+        max-args = 10
+        max-positional-args = 5
 
-[tool.ruff.lint.pydoclint]
-ignore-one-line-docstrings = true
+        [tool.ruff.lint.pydoclint]
+        ignore-one-line-docstrings = true
 
-[tool.ruff.lint.flake8-type-checking]
-strict = true
+        [tool.ruff.lint.flake8-type-checking]
+        strict = true
 
-[tool.ruff.format]
-docstring-code-format = true
-preview = true
+    [tool.ruff.format]
+    docstring-code-format = true
+    preview = true
 
 [tool.ty.src]
 exclude = ["**/.archive/**", "scratch/**"]

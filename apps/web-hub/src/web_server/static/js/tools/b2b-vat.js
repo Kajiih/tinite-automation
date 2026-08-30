@@ -25,14 +25,29 @@ export function initB2bVatTool(showError, hideError) {
   const labelB2B = document.getElementById("label-b2b");
 
   // Setup single CSV dropzone
-  setupDropzone(dropzoneB2B, fileB2BInput, (files) => {
-    selectedReportFile = files[0];
-    badgeB2B.classList.remove("hidden");
-    badgeB2B.textContent = `✓ ${selectedReportFile.name}`;
-    labelB2B.textContent = "Click or drop to replace";
-    if (hideErrorCallback) hideErrorCallback();
-    executeB2BProcessing();
-  }, ["csv"]);
+  setupDropzone(
+    dropzoneB2B,
+    fileB2BInput,
+    (files) => {
+      selectedReportFile = files[0];
+      badgeB2B.classList.remove("hidden");
+      badgeB2B.textContent = `✓ ${selectedReportFile.name}`;
+      labelB2B.textContent = "Click or drop to replace";
+      if (hideErrorCallback) hideErrorCallback();
+      executeB2BProcessing();
+    },
+    ["csv"],
+    (rejectedFiles, allowedExts) => {
+      const names = rejectedFiles.map((f) => `'${f.name}'`).join(", ");
+      const expected = allowedExts.map((e) => `.${e}`).join(", ");
+      if (showErrorCallback) {
+        showErrorCallback(
+          "Invalid File Type",
+          `Unsupported file format: ${names}. Expected CSV file (${expected}) for Amazon VAT reports.`
+        );
+      }
+    }
+  );
 
   // Departure country change -> re-process
   document.getElementById("filter-b2b-departure").addEventListener("change", (e) => {

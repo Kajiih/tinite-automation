@@ -7,7 +7,7 @@ Filters zero-rated cross-border B2B transactions from Amazon VAT reports:
 4. OUR_PRICE Tax Amount (Column Y) is 0.00.
 
 Calculates the net difference per line:
-(OUR_PRICE Tax Exclusive Selling Price - OUR_PRICE Tax Inclusive Promo Amount)
+(OUR_PRICE Tax Exclusive Selling Price + OUR_PRICE Tax Inclusive Promo Amount)
 and aggregates totals grouped by Buyer VAT registration.
 """
 
@@ -145,20 +145,48 @@ def _parse_decimal_value(raw_value: object) -> float:
         return 0.0
 
 
+REQUIRED_HEADERS: tuple[ColumnHeader, ...] = (
+    ColumnHeader.BUYER_TAX_REGISTRATION,
+    ColumnHeader.SHIP_FROM_COUNTRY,
+    ColumnHeader.SHIP_TO_COUNTRY,
+    ColumnHeader.OUR_PRICE_TAX_AMOUNT,
+    ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE,
+    ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT,
+)
+
+
 def _resolve_indices(header: Sequence[str]) -> Mapping[ColumnHeader, int]:
-    """Map expected ColumnHeader names to column positions in CSV header."""
+    """Map expected ColumnHeader names to column positions in CSV header.
+
+    Returns:
+        Mapping of ColumnHeader to 0-based column index in the header row.
+
+    Raises:
+        ValueError: If mandatory Amazon VAT report columns are missing.
+    """
     normalized_header: dict[str, int] = {
         col_name.strip().lower(): idx for idx, col_name in enumerate(header)
     }
 
     resolved: dict[ColumnHeader, int] = {}
+    missing_required: list[str] = []
+
     for col in ColumnHeader:
         key = col.value.strip().lower()
         if key in normalized_header:
             resolved[col] = normalized_header[key]
         else:
-            logger.warning("Column header '%s' not found in CSV header.", col.value)
             resolved[col] = -1
+            if col in REQUIRED_HEADERS:
+                missing_required.append(col.value)
+            else:
+                logger.warning("Optional column header '%s' not found in CSV header.", col.value)
+
+    if missing_required:
+        missing_str = ", ".join(f"'{h}'" for h in missing_required)
+        msg = f"Invalid Amazon VAT Report format: missing required columns: {missing_str}"
+        raise ValueError(msg)
+
     return resolved
 
 
@@ -204,7 +232,7 @@ def _parse_transaction_row(
 
     tax_excl_price = round(_parse_decimal_value(raw_excl_price), 2)
     tax_incl_promo = round(_parse_decimal_value(raw_incl_promo), 2)
-    net_diff = round(tax_excl_price - tax_incl_promo, 2)
+    net_diff = round(tax_excl_price + tax_incl_promo, 2)
 
     return B2BTransactionRow(
         row_index=row_idx,

@@ -30,21 +30,51 @@ export function initImageDuplicatorTool(showError, hideError) {
   const btnGenerate = document.getElementById("btn-generate-images");
 
   // Template Images Dropzone
-  setupDropzone(dropzoneTemplates, fileTemplatesInput, (files) => {
-    templateImageFiles = files;
-    badgeTemplates.classList.remove("hidden");
-    badgeTemplates.textContent = `✓ ${files.length} template images loaded`;
-    labelTemplates.textContent = "Click or drop to replace";
-    if (hideErrorCallback) hideErrorCallback();
-    updateImageDuplicationPreview();
-  }, VALID_IMAGE_EXTENSIONS);
+  setupDropzone(
+    dropzoneTemplates,
+    fileTemplatesInput,
+    (files) => {
+      templateImageFiles = files;
+      badgeTemplates.classList.remove("hidden");
+      badgeTemplates.textContent = `✓ ${files.length} template images loaded`;
+      labelTemplates.textContent = "Click or drop to replace";
+      if (hideErrorCallback) hideErrorCallback();
+      updateImageDuplicationPreview();
+    },
+    VALID_IMAGE_EXTENSIONS,
+    (rejectedFiles, allowedExts) => {
+      const names = rejectedFiles.map((f) => `'${f.name}'`).join(", ");
+      const expected = allowedExts.map((e) => `.${e}`).join(", ");
+      if (showErrorCallback) {
+        showErrorCallback(
+          "Invalid Image Type",
+          `Unsupported image format: ${names}. Expected image file (${expected}).`
+        );
+      }
+    }
+  );
 
   // ASIN File Dropzone (.txt, .csv, .xlsx)
-  setupDropzone(dropzoneAsins, fileAsinsInput, async (files) => {
-    if (files.length > 0) {
-      await loadAsinsFromFile(files[0]);
+  setupDropzone(
+    dropzoneAsins,
+    fileAsinsInput,
+    async (files) => {
+      if (files.length > 0) {
+        await loadAsinsFromFile(files[0]);
+      }
+    },
+    ["txt", "csv", "xlsx"],
+    (rejectedFiles, allowedExts) => {
+      const names = rejectedFiles.map((f) => `'${f.name}'`).join(", ");
+      const expected = allowedExts.map((e) => `.${e}`).join(", ");
+      if (showErrorCallback) {
+        showErrorCallback(
+          "Invalid ASIN File Type",
+          `Unsupported ASIN list format: ${names}. Expected text, CSV, or Excel file (${expected}).`
+        );
+      }
     }
-  }, ["txt", "csv", "xlsx"]);
+  );
 
   // Textarea ASIN input listener
   textareaAsins.addEventListener("input", () => {

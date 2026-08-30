@@ -214,6 +214,9 @@ def parse_asins_from_excel(file_bytes_or_path: bytes | Path) -> list[str]:
     return asins
 
 
+VALID_ASIN_FILE_EXTENSIONS: tuple[str, ...] = (".txt", ".csv", ".xlsx", ".tsv", "")
+
+
 def parse_asins(source: str | bytes | Path) -> list[str]:
     """Unified ASIN parser supporting strings, .txt paths, .csv, and .xlsx.
 
@@ -222,9 +225,19 @@ def parse_asins(source: str | bytes | Path) -> list[str]:
 
     Returns:
         List of deduplicated uppercase ASIN strings.
+
+    Raises:
+        FileNotFoundError: If a given file Path does not exist.
+        ValueError: If a file Path has an unsupported file extension.
     """
     if isinstance(source, Path):
+        if not source.exists():
+            msg = f"ASIN file not found at: {source}"
+            raise FileNotFoundError(msg)
         ext = source.suffix.lower()
+        if ext not in VALID_ASIN_FILE_EXTENSIONS:
+            msg = f"Unsupported ASIN file format: {ext}"
+            raise ValueError(msg)
         if ext == ".xlsx":
             return parse_asins_from_excel(source)
         content = source.read_text(encoding="utf-8-sig")

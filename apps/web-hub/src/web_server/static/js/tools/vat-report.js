@@ -31,25 +31,55 @@ export function initVatReportTool(showError, hideError) {
   const labelCatalog = document.getElementById("label-catalog");
 
   // VAT Report Dropzone
-  setupDropzone(dropzoneReport, fileReportInput, (files) => {
-    selectedReportFiles = files;
-    badgeReport.classList.remove("hidden");
-    badgeReport.textContent =
-      files.length === 1 ? `✓ ${files[0].name}` : `✓ ${files.length} CSV files loaded`;
-    labelReport.textContent = "Click or drop to replace";
-    if (hideErrorCallback) hideErrorCallback();
-    checkAndTriggerProcessing();
-  }, ["csv"]);
+  setupDropzone(
+    dropzoneReport,
+    fileReportInput,
+    (files) => {
+      selectedReportFiles = files;
+      badgeReport.classList.remove("hidden");
+      badgeReport.textContent =
+        files.length === 1 ? `✓ ${files[0].name}` : `✓ ${files.length} CSV files loaded`;
+      labelReport.textContent = "Click or drop to replace";
+      if (hideErrorCallback) hideErrorCallback();
+      checkAndTriggerProcessing();
+    },
+    ["csv"],
+    (rejectedFiles, allowedExts) => {
+      const names = rejectedFiles.map((f) => `'${f.name}'`).join(", ");
+      const expected = allowedExts.map((e) => `.${e}`).join(", ");
+      if (showErrorCallback) {
+        showErrorCallback(
+          "Invalid File Type",
+          `Unsupported report format: ${names}. Expected CSV file (${expected}) for Amazon VAT reports.`
+        );
+      }
+    }
+  );
 
   // Catalog Dropzone
-  setupDropzone(dropzoneCatalog, fileCatalogInput, (files) => {
-    selectedCatalogFile = files[0];
-    badgeCatalog.classList.remove("hidden");
-    badgeCatalog.textContent = `✓ ${selectedCatalogFile.name}`;
-    labelCatalog.textContent = "Click or drop to replace";
-    if (hideErrorCallback) hideErrorCallback();
-    checkAndTriggerProcessing();
-  }, ["xlsx"]);
+  setupDropzone(
+    dropzoneCatalog,
+    fileCatalogInput,
+    (files) => {
+      selectedCatalogFile = files[0];
+      badgeCatalog.classList.remove("hidden");
+      badgeCatalog.textContent = `✓ ${selectedCatalogFile.name}`;
+      labelCatalog.textContent = "Click or drop to replace";
+      if (hideErrorCallback) hideErrorCallback();
+      checkAndTriggerProcessing();
+    },
+    ["xlsx"],
+    (rejectedFiles, allowedExts) => {
+      const names = rejectedFiles.map((f) => `'${f.name}'`).join(", ");
+      const expected = allowedExts.map((e) => `.${e}`).join(", ");
+      if (showErrorCallback) {
+        showErrorCallback(
+          "Invalid File Type",
+          `Unsupported price catalog format: ${names}. Expected Excel file (${expected}) for the price catalog.`
+        );
+      }
+    }
+  );
 
   // Filter Event Listeners
   document.getElementById("filter-departure").addEventListener("change", (e) => {

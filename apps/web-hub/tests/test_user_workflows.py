@@ -140,7 +140,7 @@ def test_b2b_vat_web_workflow(tmp_path: Path) -> None:
     ]
     rows = [
         headers,
-        ["ORD-1", "BE0123456789", "FR", "BE", "", "0.00", "50.00", "5.00"],
+        ["ORD-1", "BE0123456789", "FR", "BE", "", "0.00", "50.00", "-5.00"],
         ["ORD-2", "BE0123456789", "FR", "BE", "", "0.00", "-20.00", "0.00"],
         ["ORD-3", "DE987654321", "FR", "DE", "", "0.00", "30.00", "0.00"],
     ]
@@ -165,9 +165,19 @@ def test_b2b_vat_web_workflow(tmp_path: Path) -> None:
     assert data["matched_rows_count"] == 3
     assert data["unique_vats_count"] == 2
     assert data["grand_total_selling_price"] == pytest.approx(60.00)
-    assert data["grand_total_promo_amount"] == pytest.approx(5.00)
+    assert data["grand_total_promo_amount"] == pytest.approx(-5.00)
     assert data["grand_total_net_difference"] == pytest.approx(55.00)
     assert len(data["vat_summaries"]) == 2
     assert len(data["transactions"]) == 3
     assert summary_out.exists()
     assert tx_out.exists()
+
+
+def test_b2b_vat_web_workflow_missing_headers(tmp_path: Path) -> None:
+    """Verify bridge raises ValueError on CSV missing required columns."""
+    bad_csv = tmp_path / "bad.csv"
+    bad_csv.write_text("Col1,Col2\nVal1,Val2\n", encoding="utf-8")
+
+    expected_msg = "Invalid Amazon VAT Report format: missing required columns"
+    with pytest.raises(ValueError, match=expected_msg):
+        bridge.run_b2b_vat(str(bad_csv))

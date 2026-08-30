@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 from pathlib import Path
@@ -143,3 +144,32 @@ def test_image_renamer_cli_execution(
 
     assert exec_result.returncode == 0
     assert "AMAZON ASIN IMAGE DUPLICATOR" in exec_result.stdout
+
+
+def test_unsupported_file_extension_raises_value_error(tmp_path: Path) -> None:
+    """Unsupported ASIN file extension raises ValueError."""
+    bad_file = tmp_path / "asins.pdf"
+    bad_file.write_text("dummy", encoding="utf-8")
+    with pytest.raises(ValueError, match=re.escape("Unsupported ASIN file format: .pdf")):
+        parse_asins(bad_file)
+
+
+def test_missing_asin_file_raises_error(tmp_path: Path) -> None:
+    """Non-existent ASIN file path raises FileNotFoundError."""
+    missing = tmp_path / "non_existent_asins.txt"
+    with pytest.raises(FileNotFoundError):
+        parse_asins(missing)
+
+
+def test_duplicate_images_missing_images_dir_raises_error(tmp_path: Path) -> None:
+    """Non-existent template image directory raises NotADirectoryError."""
+    missing_dir = tmp_path / "non_existent_images"
+    out_dir = tmp_path / "out"
+    with pytest.raises(NotADirectoryError):
+        duplicate_images(missing_dir, ["B011111111"], out_dir)
+
+
+def test_generate_image_manifest_empty_inputs() -> None:
+    """Empty ASINs or template files yield empty manifest."""
+    assert generate_image_manifest([], ["B011111111"]) == []
+    assert generate_image_manifest(["template.jpg"], []) == []

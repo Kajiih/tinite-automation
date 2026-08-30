@@ -8,11 +8,13 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import openpyxl
 import pytest
 from vat_report.engine import (
     ColumnHeader,
     RouteKey,
     TransactionType,
+    load_price_catalog,
     process_batch,
     process_vat_report,
 )
@@ -282,3 +284,42 @@ def test_cli_invocation_e2e(
 
     with output_destination.open(encoding="utf-8-sig") as f:
         assert len(list(csv.reader(f))) == 101
+
+
+def test_empty_vat_report_raises_error(tmp_path: Path) -> None:
+    """Empty VAT report CSV raises ValueError."""
+    empty_csv = tmp_path / "empty.csv"
+    empty_csv.write_text("", encoding="utf-8")
+    out_csv = tmp_path / "out.csv"
+    with pytest.raises(ValueError, match="VAT report file is empty"):
+        process_vat_report(empty_csv, {}, out_csv)
+
+
+def test_missing_report_file_raises_error(tmp_path: Path) -> None:
+    """Non-existent VAT report path raises FileNotFoundError."""
+    missing_csv = tmp_path / "missing.csv"
+    out_csv = tmp_path / "out.csv"
+    with pytest.raises(FileNotFoundError):
+        process_vat_report(missing_csv, {}, out_csv)
+
+
+def test_missing_price_catalog_raises_error(tmp_path: Path) -> None:
+    """Non-existent price catalog path raises FileNotFoundError."""
+    missing_catalog = tmp_path / "missing_catalog.xlsx"
+    with pytest.raises(FileNotFoundError):
+        load_price_catalog(missing_catalog)
+
+
+def test_empty_price_catalog_raises_error(tmp_path: Path) -> None:
+    """Excel price catalog without any valid ASIN rows raises ValueError."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Catalog"
+    ws.append(["ASIN", "Prix"])
+    catalog_path = tmp_path / "empty_catalog.xlsx"
+    wb.save(catalog_path)
+    wb.close()
+
+    expected_msg = "No valid ASIN price entries were extracted"
+    with pytest.raises(ValueError, match=expected_msg):
+        load_price_catalog(catalog_path)

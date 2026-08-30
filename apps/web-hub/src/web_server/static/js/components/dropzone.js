@@ -1,22 +1,34 @@
 /**
- * HTML5 Dropzone Helper with Recursive Directory Traversal
+ * HTML5 Dropzone Helper with Recursive Directory Traversal and File Type Validation
  */
 
 export async function extractFilesFromDataTransfer(dataTransfer, validExtensions = null) {
-  const extractedFiles = [];
+  const validFiles = [];
+  const rejectedFiles = [];
   const items = dataTransfer.items;
 
   const isAllowed = (filename) => {
     if (!validExtensions) return true;
-    const ext = filename.split(".").pop().toLowerCase();
-    return validExtensions.includes(ext);
+    const parts = filename.split(".");
+    if (parts.length < 2) return false;
+    const ext = parts.pop().toLowerCase();
+    return validExtensions.map(e => e.toLowerCase()).includes(ext);
+  };
+
+  const processFile = (file) => {
+    if (!file) return;
+    if (isAllowed(file.name)) {
+      validFiles.push(file);
+    } else {
+      rejectedFiles.push(file);
+    }
   };
 
   if (!items || items.length === 0) {
     for (const file of dataTransfer.files) {
-      if (isAllowed(file.name)) extractedFiles.push(file);
+      processFile(file);
     }
-    return extractedFiles;
+    return { validFiles, rejectedFiles };
   }
 
   async function scanEntry(entry) {
@@ -24,7 +36,7 @@ export async function extractFilesFromDataTransfer(dataTransfer, validExtensions
     if (entry.isFile) {
       await new Promise((resolve) => {
         entry.file((file) => {
-          if (isAllowed(file.name)) extractedFiles.push(file);
+          processFile(file);
           resolve();
         }, () => resolve());
       });
@@ -48,27 +60,39 @@ export async function extractFilesFromDataTransfer(dataTransfer, validExtensions
       if (entry) await scanEntry(entry);
     } else if (item.kind === "file") {
       const file = item.getAsFile();
-      if (file && isAllowed(file.name)) extractedFiles.push(file);
+      if (file) processFile(file);
     }
   }
 
-  return extractedFiles;
+  return { validFiles, rejectedFiles };
 }
 
-export function setupDropzone(dropzoneEl, fileInputEl, onFilesSelected, validExtensions = null) {
+export function setupDropzone(dropzoneEl, fileInputEl, onFilesSelected, validExtensions = null, onInvalidFiles = null) {
   if (!dropzoneEl) return;
+
+  const isAllowed = (filename) => {
+    if (!validExtensions) return true;
+    const parts = filename.split(".");
+    if (parts.length < 2) return false;
+    const ext = parts.pop().toLowerCase();
+    return validExtensions.map(e => e.toLowerCase()).includes(ext);
+  };
 
   if (fileInputEl) {
     dropzoneEl.addEventListener("click", () => fileInputEl.click());
     fileInputEl.addEventListener("change", (e) => {
-      const files = Array.from(e.target.files).filter(f => {
-        if (!validExtensions) return true;
-        const ext = f.name.split(".").pop().toLowerCase();
-        return validExtensions.includes(ext);
-      });
-      if (files.length > 0) {
-        onFilesSelected(files);
+      const allFiles = Array.from(e.target.files);
+      const validFiles = allFiles.filter(f => isAllowed(f.name));
+      const rejectedFiles = allFiles.filter(f => !isAllowed(f.name));
+
+      if (rejectedFiles.length > 0 && onInvalidFiles) {
+        onInvalidFiles(rejectedFiles, validExtensions);
       }
+      if (validFiles.length > 0) {
+        onFilesSelected(validFiles);
+      }
+      // Reset input value so re-selecting the same file fires change event
+      fileInputEl.value = "";
     });
   }
 
@@ -89,9 +113,12 @@ export function setupDropzone(dropzoneEl, fileInputEl, onFilesSelected, validExt
   });
 
   dropzoneEl.addEventListener("drop", async (e) => {
-    const files = await extractFilesFromDataTransfer(e.dataTransfer, validExtensions);
-    if (files.length > 0) {
-      onFilesSelected(files);
+    const { validFiles, rejectedFiles } = await extractFilesFromDataTransfer(e.dataTransfer, validExtensions);
+    if (rejectedFiles.length > 0 && onInvalidFiles) {
+      onInvalidFiles(rejectedFiles, validExtensions);
+    }
+    if (validFiles.length > 0) {
+      onFilesSelected(validFiles);
     }
   });
 }
