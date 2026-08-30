@@ -8,17 +8,14 @@ dynamic = ["version"]
 description = "Amazon Automation Tools Web Hub Application"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "vat-report",
-    "image-renamer",
-]
+dependencies = ["vat-report", "image-renamer"]
 
 [tool.hatch.version]
 path = "../../pyproject.toml"
 pattern = 'version = "(?P<version>[^"]+)"'
 
-[project.scripts]
-amazon-tools = "web_server.server:main"
+    [project.scripts]
+    amazon-tools = "web_server.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/web_server"]

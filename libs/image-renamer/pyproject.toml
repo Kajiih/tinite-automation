@@ -8,16 +8,14 @@ dynamic = ["version"]
 description = "Amazon ASIN Image Duplicator & Renamer Engine"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "openpyxl>=3.1.0",
-]
+dependencies = ["openpyxl>=3.1.0"]
 
 [tool.hatch.version]
 path = "../../pyproject.toml"
 pattern = 'version = "(?P<version>[^"]+)"'
 
-[project.scripts]
-duplicate-images = "image_renamer.engine:main"
+    [project.scripts]
+    duplicate-images = "image_renamer.engine:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/image_renamer"]
