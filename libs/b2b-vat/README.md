@@ -11,15 +11,24 @@ Pure Python domain library and CLI to filter and aggregate zero-rated cross-bord
 
 ## Calculations
 
-- **Line Net Difference** = `OUR_PRICE Tax Exclusive Selling Price` - `OUR_PRICE Tax Inclusive Promo Amount`
+- **Line Net Difference** = `OUR_PRICE Tax Exclusive Selling Price` + `OUR_PRICE Tax Inclusive Promo Amount`
 - **VAT Aggregation** = Grouped by `Buyer Tax Registration` with totals for sales HT, promo amounts TTC, and net difference.
 
 ## CLI Usage
 
+### Process Report and Export Summaries
 ```bash
-uv run --package b2b-vat b2b-vat \
+uv run --package b2b-vat b2b-vat process \
   --report "path/to/report.csv" \
   --departure "FR" \
   --output-summary "summary.csv" \
   --output-transactions "transactions.csv"
+```
+
+### Download Invoices (with browser cookie extraction)
+```bash
+uv run --package b2b-vat b2b-vat download-invoices \
+  --report "path/to/report.csv" \
+  --output-dir "./invoices/" \
+  --browser "chrome"
 ```

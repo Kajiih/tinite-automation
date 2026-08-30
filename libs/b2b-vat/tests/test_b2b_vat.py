@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import csv
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 from unittest.mock import patch
 
 import pytest
 from b2b_vat.engine import (
     REQUIRED_HEADERS,
     ColumnHeader,
+    InvoiceDownloadResult,
+    download_invoices_for_report,
     export_b2b_summary_csv,
     export_b2b_transactions_csv,
+    extract_browser_cookies,
     format_b2b_summary_table,
     main,
     process_b2b_vat_report,
@@ -324,7 +327,7 @@ def test_cli_invocation(
     fake_b2b_vat_csv_factory: Callable[[Sequence[Mapping[str, str]]], Path],
     tmp_path: Path,
 ) -> None:
-    """Test CLI main() execution with export arguments."""
+    """Test CLI main() execution with process subcommand."""
     rows = [
         {
             ColumnHeader.ORDER_ID.value: "ORD-CLI",
@@ -343,6 +346,7 @@ def test_cli_invocation(
 
     test_args = [
         "b2b-vat",
+        "process",
         "--report",
         str(report_path),
         "--departure",
@@ -358,3 +362,189 @@ def test_cli_invocation(
 
     assert sum_out.exists()
     assert tx_out.exists()
+
+
+def test_extract_browser_cookies_unsupported_browser() -> None:
+    """Unsupported browser names raise ValueError."""
+    with pytest.raises(ValueError, match="Unsupported browser 'netscape'"):
+        extract_browser_cookies(browser="netscape")
+
+
+def test_download_invoices_no_matching_invoices(tmp_path: Path) -> None:
+    """Report with no invoices returns empty download result."""
+    empty_csv = tmp_path / "empty_report.csv"
+    header = [h.value for h in REQUIRED_HEADERS]
+    empty_csv.write_text(",".join(header) + "\n", encoding="utf-8")
+    out_dir = tmp_path / "invoices"
+
+    res = download_invoices_for_report(empty_csv, out_dir)
+    assert res.total_invoices_found == 0
+    assert res.successful_downloads == 0
+    assert res.failed_downloads == 0
+
+
+def test_download_invoices_mocked_success_and_auth_failure(
+    fake_b2b_vat_csv_factory: Callable[[Sequence[Mapping[str, str]]], Path],
+    tmp_path: Path,
+) -> None:
+    """Verify downloading PDFs writes files and logs auth failure when response is not PDF."""
+    rows = [
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-OK",
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "BE111",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "BE",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "50.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "FR-INV-1",
+            ColumnHeader.INVOICE_URL.value: "https://amazon.fr/doc/download?v=1",
+        },
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-FAIL",
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "BE222",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "BE",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "30.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "FR-INV-2",
+            ColumnHeader.INVOICE_URL.value: "https://amazon.fr/doc/download?v=2",
+        },
+    ]
+    report_path = fake_b2b_vat_csv_factory(rows)
+    out_dir = tmp_path / "invoices_out"
+
+    class FakeResponse:
+        def __init__(self, body: bytes, url: str, content_type: str) -> None:
+            self.body = body
+            self.url = url
+            self.headers = {"Content-Type": content_type}
+
+        def geturl(self) -> str:
+            return self.url
+
+        def read(self) -> bytes:
+            return self.body
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    def fake_open(req: object, timeout: int = 30) -> FakeResponse:
+        _ = timeout
+        url = getattr(req, "full_url", str(req))
+        if "v=1" in url:
+            return FakeResponse(b"%PDF-1.4 test invoice content", url, "application/pdf")
+        login_url = "https://sellercentral.amazon.fr/ap/signin"
+        return FakeResponse(b"<html>Login required</html>", login_url, "text/html")
+
+    with patch("urllib.request.OpenerDirector.open", side_effect=fake_open):
+        res = download_invoices_for_report(
+            report_path,
+            out_dir,
+            cookie_string="session-id=123",
+        )
+
+    assert res.total_invoices_found == 2
+    assert res.successful_downloads == 1
+    assert res.failed_downloads == 1
+    assert (out_dir / "FR-INV-1.pdf").exists()
+    assert (out_dir / "FR-INV-1.pdf").read_bytes() == b"%PDF-1.4 test invoice content"
+    assert not (out_dir / "FR-INV-2.pdf").exists()
+
+
+def test_cli_download_invoices_invocation(
+    fake_b2b_vat_csv_factory: Callable[[Sequence[Mapping[str, str]]], Path],
+    tmp_path: Path,
+) -> None:
+    """Test CLI download-invoices subcommand execution."""
+    rows = [
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-CLI-DL",
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "BE999",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "BE",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "10.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "FR-CLI-INV",
+            ColumnHeader.INVOICE_URL.value: "https://amazon.fr/doc/download?v=9",
+        }
+    ]
+    report_path = fake_b2b_vat_csv_factory(rows)
+    out_dir = tmp_path / "cli_invoices"
+
+    test_args = [
+        "b2b-vat",
+        "download-invoices",
+        "--report",
+        str(report_path),
+        "--output-dir",
+        str(out_dir),
+        "--cookies",
+        "test-session=abc",
+    ]
+
+    mock_result = InvoiceDownloadResult(
+        total_invoices_found=1,
+        successful_downloads=1,
+        failed_downloads=0,
+        downloaded_files=[out_dir / "FR-CLI-INV.pdf"],
+    )
+
+    with (
+        patch("b2b_vat.engine.download_invoices_for_report", return_value=mock_result),
+        patch("sys.argv", test_args),
+    ):
+        main()
+
+
+def test_cli_download_invoices_default_output_dir(
+    fake_b2b_vat_csv_factory: Callable[[Sequence[Mapping[str, str]]], Path],
+) -> None:
+    """Test CLI download-invoices subcommand uses report.parent / <stem>_invoices default."""
+    rows = [
+        {
+            ColumnHeader.ORDER_ID.value: "ORD-DEF",
+            ColumnHeader.BUYER_TAX_REGISTRATION.value: "BE111",
+            ColumnHeader.SHIP_FROM_COUNTRY.value: "FR",
+            ColumnHeader.SHIP_TO_COUNTRY.value: "BE",
+            ColumnHeader.TAX_REPORTING_SCHEME.value: "",
+            ColumnHeader.OUR_PRICE_TAX_AMOUNT.value: "0.00",
+            ColumnHeader.OUR_PRICE_TAX_EXCLUSIVE_SELLING_PRICE.value: "10.00",
+            ColumnHeader.OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT.value: "0.00",
+            ColumnHeader.VAT_INVOICE_NUMBER.value: "FR-DEF-INV",
+            ColumnHeader.INVOICE_URL.value: "https://amazon.fr/doc/download?v=9",
+        }
+    ]
+    report_path = fake_b2b_vat_csv_factory(rows)
+    expected_default_dir = report_path.parent / f"{report_path.stem}_invoices"
+
+    test_args = [
+        "b2b-vat",
+        "download-invoices",
+        "--report",
+        str(report_path),
+    ]
+
+    mock_result = InvoiceDownloadResult(
+        total_invoices_found=1,
+        successful_downloads=1,
+        failed_downloads=0,
+        downloaded_files=[expected_default_dir / "FR-DEF-INV.pdf"],
+    )
+
+    with (
+        patch("b2b_vat.engine.download_invoices_for_report", return_value=mock_result) as mock_dl,
+        patch("sys.argv", test_args),
+    ):
+        main()
+        mock_dl.assert_called_once()
+        _, kwargs = mock_dl.call_args
+        assert kwargs["output_dir"] == expected_default_dir

@@ -74,11 +74,17 @@ tinite-automation/
 uv run --package web-hub amazon-tools
 
 # B2B Intra-EU VAT Automation:
-uv run --package b2b-vat b2b-vat \
+uv run --package b2b-vat b2b-vat process \
   --report "taxReport_Juillet 2026.csv" \
   --departure "FR" \
   --output-summary "b2b_summary.csv" \
   --output-transactions "b2b_transactions.csv"
+
+# Download B2B Invoices (via browser session):
+uv run --package b2b-vat b2b-vat download-invoices \
+  --report "taxReport_Juillet 2026.csv" \
+  --output-dir "./invoices/" \
+  --browser "chrome"
 
 # VAT Report Automation (FC Transfers):
 uv run --package vat-report vat-report \
