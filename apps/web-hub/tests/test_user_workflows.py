@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import importlib.resources
 import importlib.util
 import json
@@ -122,3 +123,51 @@ def test_generate_image_manifest_web_workflow() -> None:
         "B089N1ND4V/B089N1ND4V.MAIN.jpg",
         "B089N1ND4V/B089N1ND4V.PT01.png",
     ]
+
+
+def test_b2b_vat_web_workflow(tmp_path: Path) -> None:
+    """Verify B2B Intra-EU VAT WebAssembly execution returns valid JSON response."""
+    test_csv = tmp_path / "test_vat.csv"
+    headers = [
+        "Order ID",
+        "Buyer Tax Registration",
+        "Ship From Country",
+        "Ship To Country",
+        "Tax Reporting Scheme",
+        "OUR_PRICE Tax Amount",
+        "OUR_PRICE Tax Exclusive Selling Price",
+        "OUR_PRICE Tax Inclusive Promo Amount",
+    ]
+    rows = [
+        headers,
+        ["ORD-1", "BE0123456789", "FR", "BE", "", "0.00", "50.00", "5.00"],
+        ["ORD-2", "BE0123456789", "FR", "BE", "", "0.00", "-20.00", "0.00"],
+        ["ORD-3", "DE987654321", "FR", "DE", "", "0.00", "30.00", "0.00"],
+    ]
+    with test_csv.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerows(rows)
+
+    summary_out = tmp_path / "summary.csv"
+    tx_out = tmp_path / "tx.csv"
+
+    data = json.loads(
+        bridge.run_b2b_vat(
+            str(test_csv),
+            departure_country="FR",
+            summary_output_filename=str(summary_out),
+            transactions_output_filename=str(tx_out),
+        )
+    )
+
+    assert data["departure_country"] == "FR"
+    assert data["total_rows_scanned"] == 3
+    assert data["matched_rows_count"] == 3
+    assert data["unique_vats_count"] == 2
+    assert data["grand_total_selling_price"] == pytest.approx(60.00)
+    assert data["grand_total_promo_amount"] == pytest.approx(5.00)
+    assert data["grand_total_net_difference"] == pytest.approx(55.00)
+    assert len(data["vat_summaries"]) == 2
+    assert len(data["transactions"]) == 3
+    assert summary_out.exists()
+    assert tx_out.exists()

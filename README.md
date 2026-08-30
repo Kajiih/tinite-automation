@@ -37,6 +37,14 @@ tinite-automation/
     │       ├── sample_vat_report.csv
     │       └── amazon_asin_prix_achat_cogs_maj.xlsx
     │
+    ├── b2b-vat/                    # Pure B2B Intra-EU VAT Engine
+    │   ├── pyproject.toml          # Independent package
+    │   ├── src/b2b_vat/
+    │   │   ├── __init__.py
+    │   │   └── engine.py
+    │   └── tests/
+    │       └── test_b2b_vat.py
+    │
     └── image-renamer/              # Pure ASIN Image Duplicator & Renamer Engine
         ├── pyproject.toml          # Independent package
         ├── src/image_renamer/
@@ -62,27 +70,25 @@ tinite-automation/
 ## Command-Line Usage (CLI)
 
 ```bash
-# 1. Launch the Web Hub:
+# Launch the Web Hub:
 uv run --package web-hub amazon-tools
 
-# 2. VAT Report Automation:
+# B2B Intra-EU VAT Automation:
+uv run --package b2b-vat b2b-vat \
+  --report "taxReport_Juillet 2026.csv" \
+  --departure "FR" \
+  --output-summary "b2b_summary.csv" \
+  --output-transactions "b2b_transactions.csv"
+
+# VAT Report Automation (FC Transfers):
 uv run --package vat-report vat-report \
   --vat-report "libs/vat-report/example_data/sample_vat_report.csv" \
   --price-catalog "libs/vat-report/example_data/amazon_asin_prix_achat_cogs_maj.xlsx"
 
-# 3. ASIN Image Duplicator:
+# ASIN Image Duplicator:
 uv run --package image-renamer duplicate-images \
   --images "path/to/templates" \
   --asins "libs/image-renamer/example_data/sample_asins.txt" \
   --output "output_images" \
   --hardlinks
 ```
-
----
-
-## Running Workspace Tests
-
-```bash
-uv run pytest -v
-```
-Runs the complete test suite (10/10 tests) across all workspace member packages.

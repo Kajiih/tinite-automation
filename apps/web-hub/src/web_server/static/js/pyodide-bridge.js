@@ -25,18 +25,21 @@ export async function initPyodideEngine(onStatusUpdate = null, onError = null) {
     await micropip.install("openpyxl");
 
     update("Mounting Python engines...");
-    const [vatRes, imageRes, bridgeRes] = await Promise.all([
+    const [vatRes, imageRes, b2bRes, bridgeRes] = await Promise.all([
       fetch("/vat_report/engine.py"),
       fetch("/image_renamer/engine.py"),
+      fetch("/b2b_vat/engine.py"),
       fetch("/py/bridge.py"),
     ]);
 
     if (!vatRes.ok) throw new Error("Failed to load /vat_report/engine.py");
     if (!imageRes.ok) throw new Error("Failed to load /image_renamer/engine.py");
+    if (!b2bRes.ok) throw new Error("Failed to load /b2b_vat/engine.py");
     if (!bridgeRes.ok) throw new Error("Failed to load /py/bridge.py");
 
     const vatCode = await vatRes.text();
     const imageCode = await imageRes.text();
+    const b2bCode = await b2bRes.text();
     const bridgeCode = await bridgeRes.text();
 
     // Mount vat_report package
@@ -59,6 +62,17 @@ export async function initPyodideEngine(onStatusUpdate = null, onError = null) {
     pyodideInstance.FS.writeFile(
       "/lib/python3.12/site-packages/image_renamer/engine.py",
       imageCode
+    );
+
+    // Mount b2b_vat package
+    pyodideInstance.FS.mkdirTree("/lib/python3.12/site-packages/b2b_vat");
+    pyodideInstance.FS.writeFile(
+      "/lib/python3.12/site-packages/b2b_vat/__init__.py",
+      ""
+    );
+    pyodideInstance.FS.writeFile(
+      "/lib/python3.12/site-packages/b2b_vat/engine.py",
+      b2bCode
     );
 
     // Execute bridge functions into global Python scope

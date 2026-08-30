@@ -4,7 +4,7 @@ version = "0.2.3"
 description = "Tinite Automation - Amazon VAT Transaction Reporting and ASIN Asset Automation Monorepo"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["vat-report", "image-renamer", "web-hub"]
+dependencies = ["vat-report", "image-renamer", "b2b-vat", "web-hub"]
 
 [dependency-groups]
 dev = ["poethepoet>=0.48.0", "pytest>=8.0.0", "ruff>=0.16.5", "ty>=0.0.75"]
@@ -15,6 +15,7 @@ members = ["apps/*", "libs/*"]
 [tool.uv.sources]
 vat-report = { workspace = true }
 image-renamer = { workspace = true }
+b2b-vat = { workspace = true }
 web-hub = { workspace = true }
 
 [tool.pytest.ini_options]
@@ -22,11 +23,13 @@ addopts = "--durations=10"
 testpaths = [
     "libs/vat-report/tests",
     "libs/image-renamer/tests",
+    "libs/b2b-vat/tests",
     "apps/web-hub/tests",
 ]
 pythonpath = [
     "libs/vat-report/src",
     "libs/image-renamer/src",
+    "libs/b2b-vat/src",
     "apps/web-hub/src",
 ]
 

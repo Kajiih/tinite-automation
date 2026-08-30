@@ -4,6 +4,7 @@
 
 import { initPyodideEngine } from "./pyodide-bridge.js";
 import { initVatReportTool } from "./tools/vat-report.js";
+import { initB2bVatTool } from "./tools/b2b-vat.js";
 import { initImageDuplicatorTool } from "./tools/image-duplicator.js";
 
 function showError(title, message, traceback) {
@@ -25,20 +26,31 @@ function hideError() {
 
 function switchToolTab(tab) {
   const sectionVat = document.getElementById("section-vat");
+  const sectionB2b = document.getElementById("section-b2b");
   const sectionImages = document.getElementById("section-images");
   const btnVat = document.getElementById("tab-btn-vat");
+  const btnB2b = document.getElementById("tab-btn-b2b");
   const btnImages = document.getElementById("tab-btn-images");
+
+  const inactiveClass = "px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all";
+  const activeClass = "px-3.5 py-1.5 rounded-lg bg-white text-blue-700 shadow-sm transition-all";
+
+  sectionVat.classList.add("hidden");
+  sectionB2b.classList.add("hidden");
+  sectionImages.classList.add("hidden");
+  btnVat.className = inactiveClass;
+  btnB2b.className = inactiveClass;
+  btnImages.className = inactiveClass;
 
   if (tab === "vat") {
     sectionVat.classList.remove("hidden");
-    sectionImages.classList.add("hidden");
-    btnVat.className = "px-3.5 py-1.5 rounded-lg bg-white text-blue-700 shadow-sm transition-all";
-    btnImages.className = "px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all";
-  } else {
-    sectionVat.classList.add("hidden");
+    btnVat.className = activeClass;
+  } else if (tab === "b2b") {
+    sectionB2b.classList.remove("hidden");
+    btnB2b.className = activeClass;
+  } else if (tab === "images") {
     sectionImages.classList.remove("hidden");
-    btnImages.className = "px-3.5 py-1.5 rounded-lg bg-white text-blue-700 shadow-sm transition-all";
-    btnVat.className = "px-3.5 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all";
+    btnImages.className = activeClass;
   }
 }
 
@@ -47,6 +59,7 @@ document.getElementById("btn-dismiss-error")?.addEventListener("click", hideErro
 
 // Tab switch button listeners
 document.getElementById("tab-btn-vat")?.addEventListener("click", () => switchToolTab("vat"));
+document.getElementById("tab-btn-b2b")?.addEventListener("click", () => switchToolTab("b2b"));
 document.getElementById("tab-btn-images")?.addEventListener("click", () => switchToolTab("images"));
 
 // In-Browser Update App Listener
@@ -145,6 +158,7 @@ async function bootApp() {
 
     // Initialize Tool Controllers
     initVatReportTool(showError, hideError);
+    initB2bVatTool(showError, hideError);
     initImageDuplicatorTool(showError, hideError);
   } catch (err) {
     console.error("Boot failure:", err);

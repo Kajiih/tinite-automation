@@ -85,6 +85,11 @@ class WebHubRequestHandler(SimpleHTTPRequestHandler):
             if source_file:
                 self._serve_python_file(source_file)
                 return
+        elif self.path in {"/b2b_vat/engine.py", "/b2b_vat.py"}:
+            source_file = get_package_file("b2b_vat", "engine.py")
+            if source_file:
+                self._serve_python_file(source_file)
+                return
 
         super().do_GET()
 

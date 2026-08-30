@@ -10,8 +10,58 @@ import json
 from pathlib import Path
 from typing import Literal, TypedDict
 
+from b2b_vat.engine import (
+    export_b2b_summary_csv,
+    export_b2b_transactions_csv,
+    process_b2b_vat_report,
+)
 from image_renamer.engine import generate_image_manifest, parse_asins
 from vat_report.engine import load_price_catalog, process_batch, process_vat_report
+
+
+class B2BVATSummaryPayload(TypedDict):
+    """Aggregated B2B metric payload per Buyer VAT."""
+
+    buyer_vat: str
+    destination_countries: list[str]
+    transaction_count: int
+    total_tax_exclusive_price: float
+    total_tax_inclusive_promo: float
+    total_net_difference: float
+
+
+class B2BTransactionPayload(TypedDict):
+    """Detailed B2B transaction row payload."""
+
+    row_index: int
+    order_id: str
+    transaction_type: str
+    order_date: str
+    asin: str
+    sku: str
+    quantity: str
+    buyer_vat: str
+    ship_from_country: str
+    ship_to_country: str
+    tax_exclusive_selling_price: float
+    tax_inclusive_promo_amount: float
+    net_difference: float
+    invoice_number: str
+    marketplace_id: str
+
+
+class B2BReportResponse(TypedDict):
+    """Execution response payload for B2B Intra-EU report processing."""
+
+    departure_country: str
+    total_rows_scanned: int
+    matched_rows_count: int
+    unique_vats_count: int
+    grand_total_selling_price: float
+    grand_total_promo_amount: float
+    grand_total_net_difference: float
+    vat_summaries: list[B2BVATSummaryPayload]
+    transactions: list[B2BTransactionPayload]
 
 
 class RoutePayload(TypedDict):
@@ -194,3 +244,64 @@ def run_generate_image_manifest(image_names_json: str, asins_json: str) -> str:
     ]
 
     return json.dumps(payload)
+
+
+def run_b2b_vat(
+    report_filename: str,
+    departure_country: str = "FR",
+    summary_output_filename: str | None = None,
+    transactions_output_filename: str | None = None,
+) -> str:
+    """Process a single VAT report for B2B Intra-EU transactions and return JSON summary."""
+    result = process_b2b_vat_report(Path(report_filename), departure_country=departure_country)
+
+    if summary_output_filename:
+        export_b2b_summary_csv(result.vat_summaries, Path(summary_output_filename))
+    if transactions_output_filename:
+        export_b2b_transactions_csv(result.transactions, Path(transactions_output_filename))
+
+    vat_summaries: list[B2BVATSummaryPayload] = [
+        {
+            "buyer_vat": s.buyer_vat,
+            "destination_countries": s.destination_countries,
+            "transaction_count": s.transaction_count,
+            "total_tax_exclusive_price": s.total_tax_exclusive_price,
+            "total_tax_inclusive_promo": s.total_tax_inclusive_promo,
+            "total_net_difference": s.total_net_difference,
+        }
+        for s in result.vat_summaries
+    ]
+
+    transactions: list[B2BTransactionPayload] = [
+        {
+            "row_index": t.row_index,
+            "order_id": t.order_id,
+            "transaction_type": t.transaction_type,
+            "order_date": t.order_date,
+            "asin": t.asin,
+            "sku": t.sku,
+            "quantity": t.quantity,
+            "buyer_vat": t.buyer_vat,
+            "ship_from_country": t.ship_from_country,
+            "ship_to_country": t.ship_to_country,
+            "tax_exclusive_selling_price": t.tax_exclusive_selling_price,
+            "tax_inclusive_promo_amount": t.tax_inclusive_promo_amount,
+            "net_difference": t.net_difference,
+            "invoice_number": t.invoice_number,
+            "marketplace_id": t.marketplace_id,
+        }
+        for t in result.transactions
+    ]
+
+    response: B2BReportResponse = {
+        "departure_country": result.departure_country,
+        "total_rows_scanned": result.total_rows_scanned,
+        "matched_rows_count": result.matched_rows_count,
+        "unique_vats_count": result.unique_vats_count,
+        "grand_total_selling_price": result.grand_total_selling_price,
+        "grand_total_promo_amount": result.grand_total_promo_amount,
+        "grand_total_net_difference": result.grand_total_net_difference,
+        "vat_summaries": vat_summaries,
+        "transactions": transactions,
+    }
+    return json.dumps(response)

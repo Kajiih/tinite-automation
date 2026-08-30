@@ -3,22 +3,22 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "web-hub"
+name = "b2b-vat"
 dynamic = ["version"]
-description = "Amazon Automation Tools Web Hub Application"
+description = "Amazon VAT Report B2B Intra-EU Transaction Filtering & Aggregation Engine"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["vat-report", "image-renamer", "b2b-vat"]
+dependencies = []
 
 [tool.hatch.version]
 path = "../../pyproject.toml"
 pattern = 'version = "(?P<version>[^"]+)"'
 
-    [project.scripts]
-    amazon-tools = "web_server.server:main"
+[project.scripts]
+b2b-vat = "b2b_vat.engine:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/web_server"]
+packages = ["src/b2b_vat"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
