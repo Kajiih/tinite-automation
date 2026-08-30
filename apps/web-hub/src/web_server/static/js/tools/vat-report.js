@@ -388,8 +388,22 @@ function renderVatDownloadButtons() {
   const isBatch = currentProcessingResult.mode === "batch";
 
   if (!isBatch) {
+    const btnDownloadAll = document.createElement("button");
+    btnDownloadAll.className =
+      "bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5";
+    btnDownloadAll.innerHTML = "<span>📦</span><span>Download All</span>";
+    btnDownloadAll.onclick = () => {
+      const processedContent = pyodide.FS.readFile("/output.csv");
+      downloadBlob(processedContent, "vat_report_processed.csv", "text/csv;charset=utf-8");
+      setTimeout(() => {
+        const summaryContent = pyodide.FS.readFile("/output_country_summary.csv");
+        downloadBlob(summaryContent, "country_summary.csv", "text/csv;charset=utf-8");
+      }, 250);
+    };
+
     const btnProcessed = document.createElement("button");
-    btnProcessed.className = "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
+    btnProcessed.className =
+      "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
     btnProcessed.textContent = "⬇ Download Processed CSV";
     btnProcessed.onclick = () => {
       const content = pyodide.FS.readFile("/output.csv");
@@ -397,13 +411,15 @@ function renderVatDownloadButtons() {
     };
 
     const btnSummary = document.createElement("button");
-    btnSummary.className = "bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
+    btnSummary.className =
+      "bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
     btnSummary.textContent = "⬇ Download Country Summary CSV";
     btnSummary.onclick = () => {
       const content = pyodide.FS.readFile("/output_country_summary.csv");
       downloadBlob(content, "country_summary.csv", "text/csv;charset=utf-8");
     };
 
+    container.appendChild(btnDownloadAll);
     container.appendChild(btnProcessed);
     container.appendChild(btnSummary);
   } else {

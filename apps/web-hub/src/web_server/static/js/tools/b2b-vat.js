@@ -1,9 +1,5 @@
-/**
- * B2B Intra-EU VAT Automation Tool Controller
- */
-
 import { setupDropzone } from "../components/dropzone.js";
-import { downloadBlob } from "../components/download.js";
+import { downloadBlob, downloadZipArchive } from "../components/download.js";
 import { getPyodide } from "../pyodide-bridge.js";
 
 let selectedReportFile = null;
@@ -78,7 +74,17 @@ export function initB2bVatTool(showError, hideError) {
     renderFilteredB2BTable();
   });
 
-  // Download buttons
+  // Download All button
+  document.getElementById("btn-download-all-b2b").addEventListener("click", () => {
+    downloadAllB2bArtifacts();
+  });
+
+  // Download Invoices button
+  document.getElementById("btn-download-invoices-b2b").addEventListener("click", () => {
+    downloadAllInvoices();
+  });
+
+  // Download individual CSV buttons
   document.getElementById("btn-download-b2b-summary").addEventListener("click", () => {
     const pyodide = getPyodide();
     if (!pyodide) return;
@@ -261,4 +267,107 @@ function renderFilteredB2BTable() {
       <td class="px-5 py-3 text-right font-mono text-blue-600 text-sm">€${grandDiff.toFixed(2)}</td>
     </tr>
   `;
+}
+
+async function downloadAllInvoices() {
+  if (!currentB2BResult || !currentB2BResult.transactions || currentB2BResult.transactions.length === 0) {
+    if (showErrorCallback) {
+      showErrorCallback("No Transactions", "No matching B2B transactions found to download invoices for.");
+    }
+    return;
+  }
+
+  const validInvoices = currentB2BResult.transactions.filter(
+    (t) => t.invoice_url && t.invoice_url.trim() !== ""
+  );
+
+  if (validInvoices.length === 0) {
+    if (showErrorCallback) {
+      showErrorCallback("No Invoice URLs", "No invoice download URLs found in the matched transactions.");
+    }
+    return;
+  }
+
+  const baseName = selectedReportFile ? selectedReportFile.name.replace(/\.[^/.]+$/, "") : "b2b_vat";
+  const btnInvoices = document.getElementById("btn-download-invoices-b2b");
+  const originalHtml = btnInvoices.innerHTML;
+  btnInvoices.disabled = true;
+  btnInvoices.innerHTML = `<span>⏳</span><span>Fetching 0/${validInvoices.length}...</span>`;
+
+  try {
+    const filesMap = new Map();
+    let corsBlocked = false;
+
+    for (let i = 0; i < validInvoices.length; i++) {
+      const tx = validInvoices[i];
+      btnInvoices.innerHTML = `<span>⏳</span><span>Fetching ${i + 1}/${validInvoices.length}...</span>`;
+
+      try {
+        const resp = await fetch(tx.invoice_url, { mode: "cors" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const docName = tx.invoice_number ? `${tx.invoice_number}.pdf` : `invoice_${tx.order_id}.pdf`;
+        filesMap.set(docName, blob);
+      } catch (fetchErr) {
+        console.warn(`Direct fetch failed for invoice (${tx.order_id}):`, fetchErr);
+        corsBlocked = true;
+        break;
+      }
+    }
+
+    if (!corsBlocked && filesMap.size > 0) {
+      btnInvoices.innerHTML = `<span>⏳</span><span>Packaging ZIP...</span>`;
+      await downloadZipArchive(filesMap, `${baseName}_invoices.zip`);
+    } else {
+      // CORS fallback: open invoice links in tabs with staggered delay
+      if (showErrorCallback) {
+        showErrorCallback(
+          "Direct Fetch Restricted by Seller Central",
+          `Amazon Seller Central security prevents direct background download of invoices. Opening ${validInvoices.length} invoice link(s) in browser tabs...`
+        );
+      }
+
+      validInvoices.forEach((tx, idx) => {
+        setTimeout(() => {
+          window.open(tx.invoice_url, "_blank");
+        }, idx * 350);
+      });
+    }
+  } catch (err) {
+    console.error("Invoice download error:", err);
+    if (showErrorCallback) showErrorCallback("Invoice Download Error", err.message);
+  } finally {
+    btnInvoices.disabled = false;
+    btnInvoices.innerHTML = originalHtml;
+  }
+}
+
+async function downloadAllB2bArtifacts() {
+  const pyodide = getPyodide();
+  if (!pyodide || !selectedReportFile) return;
+
+  const baseName = selectedReportFile.name.replace(/\.[^/.]+$/, "");
+
+  // 1. Download Summary CSV
+  try {
+    const summaryContent = pyodide.FS.readFile("/b2b_summary.csv");
+    downloadBlob(summaryContent, `${baseName}_b2b_vat_summary.csv`, "text/csv;charset=utf-8");
+  } catch (err) {
+    console.error("Failed to download summary CSV:", err);
+  }
+
+  // 2. Download Transactions CSV (with small delay for browser download queue)
+  setTimeout(() => {
+    try {
+      const txContent = pyodide.FS.readFile("/b2b_transactions.csv");
+      downloadBlob(txContent, `${baseName}_b2b_filtered_transactions.csv`, "text/csv;charset=utf-8");
+    } catch (err) {
+      console.error("Failed to download transactions CSV:", err);
+    }
+  }, 250);
+
+  // 3. Trigger Invoices Download
+  setTimeout(() => {
+    downloadAllInvoices();
+  }, 500);
 }

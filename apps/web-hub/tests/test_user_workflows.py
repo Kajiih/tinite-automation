@@ -137,12 +137,43 @@ def test_b2b_vat_web_workflow(tmp_path: Path) -> None:
         "OUR_PRICE Tax Amount",
         "OUR_PRICE Tax Exclusive Selling Price",
         "OUR_PRICE Tax Inclusive Promo Amount",
+        "Invoice Url",
     ]
     rows = [
         headers,
-        ["ORD-1", "BE0123456789", "FR", "BE", "", "0.00", "50.00", "-5.00"],
-        ["ORD-2", "BE0123456789", "FR", "BE", "", "0.00", "-20.00", "0.00"],
-        ["ORD-3", "DE987654321", "FR", "DE", "", "0.00", "30.00", "0.00"],
+        [
+            "ORD-1",
+            "BE0123456789",
+            "FR",
+            "BE",
+            "",
+            "0.00",
+            "50.00",
+            "-5.00",
+            "https://amazon.fr/doc/1",
+        ],
+        [
+            "ORD-2",
+            "BE0123456789",
+            "FR",
+            "BE",
+            "",
+            "0.00",
+            "-20.00",
+            "0.00",
+            "https://amazon.fr/doc/2",
+        ],
+        [
+            "ORD-3",
+            "DE987654321",
+            "FR",
+            "DE",
+            "",
+            "0.00",
+            "30.00",
+            "0.00",
+            "https://amazon.fr/doc/3",
+        ],
     ]
     with test_csv.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
@@ -169,6 +200,7 @@ def test_b2b_vat_web_workflow(tmp_path: Path) -> None:
     assert data["grand_total_net_difference"] == pytest.approx(55.00)
     assert len(data["vat_summaries"]) == 2
     assert len(data["transactions"]) == 3
+    assert data["transactions"][0]["invoice_url"] == "https://amazon.fr/doc/1"
     assert summary_out.exists()
     assert tx_out.exists()
 

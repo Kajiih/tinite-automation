@@ -55,6 +55,7 @@ class ColumnHeader(StrEnum):
     OUR_PRICE_TAX_INCLUSIVE_PROMO_AMOUNT = "OUR_PRICE Tax Inclusive Promo Amount"
     BUYER_TAX_REGISTRATION = "Buyer Tax Registration"
     VAT_INVOICE_NUMBER = "VAT Invoice Number"
+    INVOICE_URL = "Invoice Url"
     SHIP_FROM_COUNTRY = "Ship From Country"
     SHIP_TO_COUNTRY = "Ship To Country"
 
@@ -77,6 +78,7 @@ class B2BTransactionRow:
     tax_inclusive_promo_amount: float
     net_difference: float
     invoice_number: str
+    invoice_url: str
     marketplace_id: str
 
 
@@ -249,6 +251,7 @@ def _parse_transaction_row(
         tax_inclusive_promo_amount=tax_incl_promo,
         net_difference=net_diff,
         invoice_number=_get_cell_value(row, indices[ColumnHeader.VAT_INVOICE_NUMBER]),
+        invoice_url=_get_cell_value(row, indices[ColumnHeader.INVOICE_URL]),
         marketplace_id=_get_cell_value(row, indices[ColumnHeader.MARKETPLACE_ID]),
     )
 
@@ -425,6 +428,7 @@ def export_b2b_transactions_csv(
         "TAX_INCLUSIVE_PROMO_AMOUNT",
         "NET_DIFFERENCE_EUR",
         "VAT_INVOICE_NUMBER",
+        "INVOICE_URL",
         "MARKETPLACE_ID",
     ]
 
@@ -445,6 +449,7 @@ def export_b2b_transactions_csv(
             f"{tx.tax_inclusive_promo_amount:.2f}",
             f"{tx.net_difference:.2f}",
             tx.invoice_number,
+            tx.invoice_url,
             tx.marketplace_id,
         ]
         for tx in transactions

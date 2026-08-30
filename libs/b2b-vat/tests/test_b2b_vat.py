@@ -281,6 +281,7 @@ def test_csv_exports(
         data_row = next(reader)
 
         assert header[0] == "LINE_NUMBER"
+        assert header[14] == "INVOICE_URL"
         assert data_row[1] == "ORD-1"
         assert data_row[7] == "BE111"
 
@@ -300,6 +301,11 @@ def test_actual_july_2026_vat_report(test_tax_report_path: Path) -> None:
     assert result.total_rows_scanned == 3982
     assert result.matched_rows_count == 3
     assert result.unique_vats_count == 2
+
+    # Verify invoice numbers and URLs are parsed
+    tx0 = result.transactions[0]
+    assert tx0.invoice_number == "FR6000315ZSONC"
+    assert tx0.invoice_url.startswith("https://sellercentral.amazon.fr/document/download")
 
     vat_by_id = {s.buyer_vat: s for s in result.vat_summaries}
     assert "BE0536704364" in vat_by_id

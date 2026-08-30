@@ -47,6 +47,7 @@ class B2BTransactionPayload(TypedDict):
     tax_inclusive_promo_amount: float
     net_difference: float
     invoice_number: str
+    invoice_url: str
     marketplace_id: str
 
 
@@ -288,6 +289,7 @@ def run_b2b_vat(
             "tax_inclusive_promo_amount": t.tax_inclusive_promo_amount,
             "net_difference": t.net_difference,
             "invoice_number": t.invoice_number,
+            "invoice_url": t.invoice_url,
             "marketplace_id": t.marketplace_id,
         }
         for t in result.transactions

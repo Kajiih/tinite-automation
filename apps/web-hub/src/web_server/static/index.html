@@ -297,14 +297,22 @@
               <h3 class="font-bold text-slate-900 text-base">Aggregated Buyer VAT Summary</h3>
               <p class="text-xs text-slate-500">Cross-border zero-rated transactions grouped by Buyer VAT registration</p>
             </div>
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="btn-download-all-b2b" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5">
+                <span>📦</span>
+                <span>Download All</span>
+              </button>
+              <button id="btn-download-invoices-b2b" class="bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5">
+                <span>🧾</span>
+                <span>Download Invoices</span>
+              </button>
               <button id="btn-download-b2b-summary" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5">
                 <span>⬇</span>
-                <span>Download VAT Summary CSV</span>
+                <span>Summary CSV</span>
               </button>
               <button id="btn-download-b2b-transactions" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5">
                 <span>⬇</span>
-                <span>Download Filtered Transactions CSV</span>
+                <span>Transactions CSV</span>
               </button>
             </div>
           </div>
