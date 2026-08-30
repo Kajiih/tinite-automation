@@ -306,10 +306,6 @@
                 <span>⬇</span>
                 <span>Transactions CSV</span>
               </button>
-              <button id="btn-download-invoices-b2b" class="bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5">
-                <span>🧾</span>
-                <span>Download Invoices</span>
-              </button>
               <button id="btn-download-all-b2b" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5">
                 <span>📦</span>
                 <span>Download All (.zip)</span>
@@ -465,68 +461,6 @@
     </section>
 
   </main>
-
-  <!-- B2B Invoices Modal -->
-  <div id="modal-b2b-invoices" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-3xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-      <div class="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-        <div class="flex items-center space-x-2">
-          <span class="text-xl">🧾</span>
-          <div>
-            <h3 class="font-bold text-slate-900 text-sm" id="modal-invoices-title">B2B Cross-Border Invoices</h3>
-            <p class="text-xs text-slate-500" id="modal-invoices-subtitle">Direct download links from Amazon Seller Central</p>
-          </div>
-        </div>
-        <button id="btn-close-invoices-modal" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200 transition">
-          ✕
-        </button>
-      </div>
-
-      <div class="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
-        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3.5 text-xs text-blue-900 flex items-start space-x-2.5">
-          <span class="text-base">💡</span>
-          <div>
-            <p class="font-semibold">Amazon Seller Central Authentication</p>
-            <p class="text-blue-700 mt-0.5">Clicking these links downloads the PDF directly from Seller Central using your logged-in browser session.</p>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap gap-2 pt-1">
-          <button id="btn-modal-open-all-invoices" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5">
-            <span>🚀</span>
-            <span>Open All Invoices in Tabs</span>
-          </button>
-          <button id="btn-modal-download-launcher" class="bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 text-xs font-semibold px-3.5 py-2 rounded-lg transition flex items-center space-x-1.5">
-            <span>📄</span>
-            <span>Save Invoices HTML Page</span>
-          </button>
-        </div>
-
-        <div class="border border-slate-200 rounded-xl overflow-hidden mt-2">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-              <tr>
-                <th class="px-4 py-2.5">Order ID</th>
-                <th class="px-4 py-2.5">Buyer VAT</th>
-                <th class="px-4 py-2.5">Invoice #</th>
-                <th class="px-4 py-2.5 text-right">Net Amount</th>
-                <th class="px-4 py-2.5 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody id="modal-invoices-tbody" class="divide-y divide-slate-100 font-mono">
-              <!-- Injected via JS -->
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="p-4 border-t border-slate-200 bg-slate-50 flex justify-end">
-        <button id="btn-modal-close-footer" class="bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold px-4 py-2 rounded-lg transition">
-          Close
-        </button>
-      </div>
-    </div>
-  </div>
 
   <!-- Footer -->
   <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">

@@ -616,50 +616,109 @@ DEFAULT_AMAZON_DOMAINS: tuple[str, ...] = (
 )
 
 
-def extract_browser_cookies(
-    browser: str = "chrome",
-    domains: Sequence[str] = DEFAULT_AMAZON_DOMAINS,
+BROWSER_CANDIDATES: tuple[str, ...] = (
+    "chrome",
+    "firefox",
+    "edge",
+    "brave",
+    "arc",
+    "opera",
+    "vivaldi",
+    "safari",
+)
+
+
+def _extract_from_browser_name(
+    browser_name: str,
+    domains: Sequence[str],
 ) -> http.cookiejar.CookieJar:
-    """Extract Amazon Seller Central session cookies from local browser.
-
-    Args:
-        browser: Browser name (chrome, arc, brave, edge, safari, firefox, opera, vivaldi).
-        domains: Target domain names to search cookies for.
-
-    Returns:
-        CookieJar containing extracted browser cookies.
-
-    Raises:
-        UnsupportedBrowserError: If the browser name is unsupported.
-    """
+    """Extract cookies from a specific browser engine."""
     browser_map = {
         "chrome": browser_cookie3.chrome,
-        "arc": browser_cookie3.arc,
-        "brave": browser_cookie3.brave,
-        "edge": browser_cookie3.edge,
         "firefox": browser_cookie3.firefox,
+        "edge": browser_cookie3.edge,
+        "brave": browser_cookie3.brave,
+        "arc": browser_cookie3.arc,
         "safari": browser_cookie3.safari,
         "opera": browser_cookie3.opera,
         "vivaldi": browser_cookie3.vivaldi,
         "chromium": browser_cookie3.chromium,
     }
 
-    loader = browser_map.get(browser.lower().strip())
+    loader = browser_map.get(browser_name.lower().strip())
     if loader is None:
-        valid_opts = ", ".join(sorted(browser_map.keys()))
-        msg = f"Unsupported browser '{browser}'. Valid options: {valid_opts}"
+        valid_opts = ", ".join(sorted(BROWSER_CANDIDATES))
+        msg = f"Unsupported browser '{browser_name}'. Valid options: {valid_opts}, auto"
         raise UnsupportedBrowserError(msg)
 
     jar = http.cookiejar.CookieJar()
+    # Try broad domain queries first
+    for query in ("amazon", "sellercentral", ""):
+        try:
+            query_jar = loader(domain_name=query)
+            for cookie in query_jar:
+                jar.set_cookie(cookie)
+            if len(jar) > 0:
+                return jar
+        except (browser_cookie3.BrowserCookieError, OSError, ValueError) as err:
+            logger.debug("Failed extracting %s cookies from %s: %s", query, browser_name, err)
+
     for domain in domains:
         try:
             domain_jar = loader(domain_name=domain)
             for cookie in domain_jar:
                 jar.set_cookie(cookie)
         except (browser_cookie3.BrowserCookieError, OSError, ValueError) as err:
-            logger.debug("Failed extracting cookies from %s for %s: %s", browser, domain, err)
+            logger.debug("Failed extracting cookies from %s for %s: %s", browser_name, domain, err)
 
     return jar
+
+
+def extract_browser_cookies(
+    browser: str = "auto",
+    domains: Sequence[str] = DEFAULT_AMAZON_DOMAINS,
+) -> tuple[http.cookiejar.CookieJar, str]:
+    """Extract Amazon Seller Central session cookies with automatic fallback.
+
+    Args:
+        browser: Browser name ('auto', 'chrome', 'firefox', 'edge', 'brave', 'arc', 'safari').
+        domains: Target domain names to search cookies for.
+
+    Returns:
+        Tuple of (CookieJar containing extracted cookies, name of detected browser).
+
+    Raises:
+        UnsupportedBrowserError: If an explicitly requested browser name is invalid.
+    """
+    req_browser = browser.lower().strip()
+    if req_browser == "auto":
+        candidates = BROWSER_CANDIDATES
+    else:
+        if req_browser not in {
+            "chrome",
+            "firefox",
+            "edge",
+            "brave",
+            "arc",
+            "safari",
+            "opera",
+            "vivaldi",
+            "chromium",
+        }:
+            valid_opts = ", ".join(sorted(BROWSER_CANDIDATES))
+            msg = f"Unsupported browser '{browser}'. Valid options: {valid_opts}, auto"
+            raise UnsupportedBrowserError(msg)
+        fallbacks = tuple(
+            b for b in ("firefox", "edge", "chrome", "brave", "arc", "safari") if b != req_browser
+        )
+        candidates = (req_browser, *fallbacks)
+
+    for candidate in candidates:
+        jar = _extract_from_browser_name(candidate, domains=domains)
+        if len(jar) > 0:
+            return jar, candidate
+
+    return http.cookiejar.CookieJar(), (req_browser if req_browser != "auto" else "none")
 
 
 def _download_single_invoice(
@@ -679,9 +738,18 @@ def _download_single_invoice(
     doc_filename = f"{tx.invoice_number}.pdf" if tx.invoice_number else f"invoice_{tx.order_id}.pdf"
     target_file = output_dir / doc_filename
 
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Upgrade-Insecure-Requests": "1",
+    }
     req = urllib.request.Request(  # ruff: ignore[suspicious-url-open-usage]
         tx.invoice_url,
-        headers={"User-Agent": user_agent},
+        headers=headers,
     )
     if cookie_string:
         req.add_header("Cookie", cookie_string)
@@ -723,7 +791,7 @@ def _build_http_opener(
     cookie_string: str | None,
     cookie_file: Path | None,
     progress_callback: InvoiceProgressCallback | None,
-) -> urllib.request.OpenerDirector:
+) -> tuple[urllib.request.OpenerDirector, str]:
     """Build and configure urllib HTTP opener with session cookies."""
     if cookie_file and cookie_file.exists():
         if progress_callback:
@@ -735,7 +803,7 @@ def _build_http_opener(
             )
         jar: http.cookiejar.CookieJar = http.cookiejar.MozillaCookieJar(cookie_file)
         jar.load(ignore_discard=True, ignore_expires=True)  # type: ignore[attr-defined]
-        return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar)), "cookie_file"
 
     if cookie_string:
         if progress_callback:
@@ -745,17 +813,32 @@ def _build_http_opener(
                     message="Using provided cookie header string",
                 )
             )
-        return urllib.request.build_opener()
+        return urllib.request.build_opener(), "header_string"
 
     if progress_callback:
         progress_callback(
             InvoiceDownloadEvent(
                 phase=DownloadPhase.COOKIES,
-                message=f"Extracting cookies from browser: '{browser}'",
+                message=(
+                    "Auto-detecting Amazon browser session..."
+                    if browser == "auto"
+                    else f"Extracting cookies from '{browser}' (with auto-fallback)..."
+                ),
             )
         )
-    extracted_jar = extract_browser_cookies(browser=browser)
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(extracted_jar))
+    extracted_jar, resolved_browser = extract_browser_cookies(browser=browser)
+    if progress_callback and len(extracted_jar) > 0:
+        progress_callback(
+            InvoiceDownloadEvent(
+                phase=DownloadPhase.COOKIES,
+                message=f"Found {len(extracted_jar)} cookie(s) from '{resolved_browser}'",
+            )
+        )
+
+    return (
+        urllib.request.build_opener(urllib.request.HTTPCookieProcessor(extracted_jar)),
+        resolved_browser,
+    )
 
 
 def download_invoices_for_report(
@@ -763,7 +846,7 @@ def download_invoices_for_report(
     output_dir: Path,
     *,
     departure_country: str = DEFAULT_DEPARTURE_COUNTRY,
-    browser: str = "chrome",
+    browser: str = "auto",
     cookie_string: str | None = None,
     cookie_file: Path | None = None,
     progress_callback: InvoiceProgressCallback | None = None,
@@ -801,7 +884,7 @@ def download_invoices_for_report(
             failed_downloads=0,
         )
 
-    opener = _build_http_opener(
+    opener, resolved_browser = _build_http_opener(
         browser=browser,
         cookie_string=cookie_string,
         cookie_file=cookie_file,
@@ -844,7 +927,7 @@ def download_invoices_for_report(
             output_dir=output_dir,
             user_agent=user_agent,
             cookie_string=cookie_string,
-            browser=browser,
+            browser=resolved_browser,
         )
 
         if saved_path is not None:
@@ -969,7 +1052,19 @@ def _handle_download_invoices_command(args: argparse.Namespace) -> None:
     print(f"  Successfully Saved:   {dl_res.successful_downloads}")
     print(f"  Failed / Skipped:     {dl_res.failed_downloads}")
     print(f"  Output Directory:     {target_out_dir}")
-    print("=" * HEADER_BANNER_LENGTH + "\n")
+    print("=" * HEADER_BANNER_LENGTH)
+
+    if dl_res.failed_downloads > 0 and dl_res.successful_downloads == 0:
+        print("\n  💡 Windows / Chrome Tip:")
+        print("     Chrome (127+) on Windows locks session cookies with App-Bound encryption.")
+        print("     Quick alternatives to download immediately:")
+        print("     1. Log in via Firefox or Edge and run:")
+        print("        uv run b2b-vat download-invoices -r <report> --browser edge")
+        print("        uv run b2b-vat download-invoices -r <report> --browser firefox")
+        print("     2. Or copy the Cookie header from DevTools (F12 -> Network):")
+        print('        uv run b2b-vat download-invoices -r <report> --cookies "session-id=..."\n')
+    else:
+        print()
 
 
 def main() -> None:
@@ -997,8 +1092,8 @@ def main() -> None:
         help="Destination directory (default: <report_name>_invoices/)",
     )
     dl.add_argument("-d", "--departure", type=str, default=DEFAULT_DEPARTURE_COUNTRY)
-    browser_help = "Browser for cookies (chrome, arc, brave, edge, safari, firefox)"
-    dl.add_argument("-b", "--browser", type=str, default="chrome", help=browser_help)
+    browser_help = "Browser for cookies: auto (default), chrome, firefox, edge, brave, arc, safari"
+    dl.add_argument("-b", "--browser", type=str, default="auto", help=browser_help)
     dl.add_argument("--cookies", type=str, default=None, help="Raw cookie header override")
     dl.add_argument("--cookie-file", type=Path, default=None, help="Path to cookie file")
 

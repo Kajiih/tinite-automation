@@ -22,5 +22,9 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
-# Launch Amazon Automation Tools Web Hub from workspace
-uv run --no-dev --package web-hub python -m web_server.server "$@"
+# Execute command via uv if arguments provided, otherwise launch Web Hub
+if [ $# -eq 0 ]; then
+    uv run --no-dev --package web-hub python -m web_server.server
+else
+    uv run "$@"
+fi

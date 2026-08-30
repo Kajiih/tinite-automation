@@ -34,6 +34,10 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Launch Amazon Automation Tools Web Hub from workspace
-uv run --no-dev --package web-hub python -m web_server.server %*
-pause >nul
+:: Execute command via uv if arguments provided, otherwise launch Web Hub
+if "%~1"=="" (
+    uv run --no-dev --package web-hub python -m web_server.server
+    pause >nul
+) else (
+    uv run %*
+)

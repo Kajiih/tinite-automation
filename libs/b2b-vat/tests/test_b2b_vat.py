@@ -602,7 +602,10 @@ def test_download_invoices_emits_progress_events(
 
     with (
         patch("urllib.request.build_opener", return_value=mock_opener),
-        patch("b2b_vat.engine.extract_browser_cookies", return_value=http.cookiejar.CookieJar()),
+        patch(
+            "b2b_vat.engine.extract_browser_cookies",
+            return_value=(http.cookiejar.CookieJar(), "chrome"),
+        ),
     ):
         result = download_invoices_for_report(
             report_file,
@@ -618,6 +621,49 @@ def test_download_invoices_emits_progress_events(
     assert DownloadPhase.STARTING in phases
     assert DownloadPhase.DOWNLOADING in phases
     assert DownloadPhase.SAVED in phases
+
+
+def test_browser_auto_fallback_detection() -> None:
+    """Test auto-fallback detects the first browser with valid cookies."""
+    mock_firefox_jar = http.cookiejar.CookieJar()
+    mock_cookie = http.cookiejar.Cookie(  # type: ignore[call-arg]
+        version=0,
+        name="session-id",
+        value="123-456",
+        port=None,
+        port_specified=False,
+        domain=".amazon.fr",
+        domain_specified=True,
+        domain_initial_dot=True,
+        path="/",
+        path_specified=True,
+        secure=True,
+        expires=None,
+        discard=True,
+        comment=None,
+        comment_url=None,
+        rest={},
+    )
+    mock_firefox_jar.set_cookie(mock_cookie)
+
+    def fake_extract_from_browser(
+        browser_name: str, domains: object = None
+    ) -> http.cookiejar.CookieJar:
+        _ = domains
+        if browser_name == "firefox":
+            return mock_firefox_jar
+        return http.cookiejar.CookieJar()
+
+    with patch("b2b_vat.engine._extract_from_browser_name", side_effect=fake_extract_from_browser):
+        # 1. auto mode finds firefox
+        jar, detected = extract_browser_cookies(browser="auto")
+        assert detected == "firefox"
+        assert len(jar) == 1
+
+        # 2. requested chrome with 0 cookies falls back to firefox
+        jar_chrome_fallback, detected_fallback = extract_browser_cookies(browser="chrome")
+        assert detected_fallback == "firefox"
+        assert len(jar_chrome_fallback) == 1
 
 
 def test_domain_exceptions_inheritance(tmp_path: Path) -> None:
