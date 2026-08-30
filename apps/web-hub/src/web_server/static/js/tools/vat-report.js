@@ -388,19 +388,6 @@ function renderVatDownloadButtons() {
   const isBatch = currentProcessingResult.mode === "batch";
 
   if (!isBatch) {
-    const btnDownloadAll = document.createElement("button");
-    btnDownloadAll.className =
-      "bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5";
-    btnDownloadAll.innerHTML = "<span>📦</span><span>Download All</span>";
-    btnDownloadAll.onclick = () => {
-      const processedContent = pyodide.FS.readFile("/output.csv");
-      downloadBlob(processedContent, "vat_report_processed.csv", "text/csv;charset=utf-8");
-      setTimeout(() => {
-        const summaryContent = pyodide.FS.readFile("/output_country_summary.csv");
-        downloadBlob(summaryContent, "country_summary.csv", "text/csv;charset=utf-8");
-      }, 250);
-    };
-
     const btnProcessed = document.createElement("button");
     btnProcessed.className =
       "bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition";
@@ -419,9 +406,22 @@ function renderVatDownloadButtons() {
       downloadBlob(content, "country_summary.csv", "text/csv;charset=utf-8");
     };
 
-    container.appendChild(btnDownloadAll);
+    const btnDownloadAll = document.createElement("button");
+    btnDownloadAll.className =
+      "bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded-lg shadow-sm transition flex items-center space-x-1.5";
+    btnDownloadAll.innerHTML = "<span>📦</span><span>Download All (.zip)</span>";
+    btnDownloadAll.onclick = async () => {
+      const processedContent = pyodide.FS.readFile("/output.csv");
+      const summaryContent = pyodide.FS.readFile("/output_country_summary.csv");
+      const filesMap = new Map();
+      filesMap.set("vat_report_processed.csv", processedContent);
+      filesMap.set("country_summary.csv", summaryContent);
+      await downloadZipArchive(filesMap, "vat_report_all_artifacts.zip");
+    };
+
     container.appendChild(btnProcessed);
     container.appendChild(btnSummary);
+    container.appendChild(btnDownloadAll);
   } else {
     if (activeFileIndex === "all") {
       const btnZip = document.createElement("button");
